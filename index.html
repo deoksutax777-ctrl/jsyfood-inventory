@@ -998,7 +998,8 @@ function xlStyles() {
 // F=입고수량, G=입고단가, H=입고금액(=F*G)
 // I=출고수량, J=출고단가(=총평균), K=출고금액(=I*J)
 // L=기말수량(=C+F-I), M=기말단가(=J), N=기말금액(=L*M)
-function buildExcelSheet(category, sections, year, month, st) {
+// prevSheetName: 전월 시트명 (2월부터 기초 = 전월 기말 수식 참조)
+function buildExcelSheet(category, sections, year, month, st, prevSheetName) {
     const ws = {};
     let r = 0; // 현재 행 (0-indexed)
 
@@ -1049,9 +1050,14 @@ function buildExcelSheet(category, sections, year, month, st) {
             cell(r, 0, item.name, st.name);
             cell(r, 1, item.unit, st.unit);
 
-            // C,D: 기초수량, 기초단가 (값 입력)
-            cell(r, 2, d.gichoQty, { ...st.numDec, font: { ...st.numGicheo.font } });
-            cell(r, 3, d.gichoPrice, st.numGicheo);
+            // C,D,E: 기초 (1월=값, 2월~=전월 기말 참조)
+            if (prevSheetName) {
+                cell(r, 2, { f: `'${prevSheetName}'!L${R}` }, { ...st.numDec, font: { ...st.numGicheo.font } });
+                cell(r, 3, { f: `'${prevSheetName}'!M${R}` }, st.numGicheo);
+            } else {
+                cell(r, 2, d.gichoQty, { ...st.numDec, font: { ...st.numGicheo.font } });
+                cell(r, 3, d.gichoPrice, st.numGicheo);
+            }
             // E: 기초금액 = C*D
             cell(r, 4, { f: `C${R}*D${R}` }, st.numGicheo);
 
@@ -1142,37 +1148,53 @@ function writeFileNoGrid(wb, fileName) {
     });
 }
 
-function downloadSauceExcel(year, month) {
+function buildMultiSheetWb(category, sections, year, month, nameColWidth, calcFn) {
     const wb = XLSX.utils.book_new();
-    const ym = `${year % 100}${String(month).padStart(2, '0')}`;
     const st = xlStyles();
+    const yy = year % 100;
 
-    const ws = buildExcelSheet('sauce', SAUCE_SECTIONS, year, month, st);
-    finalizeSheet(wb, ws, ym, 16);
+    for (let m = 1; m <= month; m++) {
+        const sheetName = `${yy}${String(m).padStart(2, '0')}`;
+        const prevSheet = m > 1 ? `${yy}${String(m - 1).padStart(2, '0')}` : null;
+
+        // 해당 월 데이터 계산
+        if (calcFn) calcFn(year, m);
+
+        // 전월 기말 → 당월 기초 연결 (DATA에도 반영)
+        if (m > 1) {
+            sections.forEach(sec => {
+                if (sec.key === 'total') return; // 합계는 자동 계산
+                sec.items.forEach(item => {
+                    linkGicho(category, sec.key, item.name, year, m);
+                    const d = getItemData(category, sec.key, item.name, year, m);
+                    calcWeightedAvg(d);
+                });
+            });
+            if (calcFn) calcFn(year, m);
+        }
+
+        const ws = buildExcelSheet(category, sections, year, m, st, prevSheet);
+        finalizeSheet(wb, ws, sheetName, nameColWidth);
+    }
+
+    return wb;
+}
+
+function downloadSauceExcel(year, month) {
+    const wb = buildMultiSheetWb('sauce', SAUCE_SECTIONS, year, month, 16, null);
+    const ym = `${year % 100}${String(month).padStart(2, '0')}`;
     writeFileNoGrid(wb, `재고수불부_소스_${ym}.xlsx`);
 }
 
 function downloadMeatExcel(year, month) {
-    const wb = XLSX.utils.book_new();
+    const wb = buildMultiSheetWb('meat', MEAT_SECTIONS, year, month, 12, calcMeatTotals);
     const ym = `${year % 100}${String(month).padStart(2, '0')}`;
-    const st = xlStyles();
-
-    calcMeatTotals(year, month);
-
-    const ws = buildExcelSheet('meat', MEAT_SECTIONS, year, month, st);
-    finalizeSheet(wb, ws, ym, 12);
     writeFileNoGrid(wb, `재고수불부_원육_${ym}.xlsx`);
 }
 
 function downloadProcessedExcel(year, month) {
-    const wb = XLSX.utils.book_new();
+    const wb = buildMultiSheetWb('processed', PROC_SECTIONS, year, month, 20, calcProcTotals);
     const ym = `${year % 100}${String(month).padStart(2, '0')}`;
-    const st = xlStyles();
-
-    calcProcTotals(year, month);
-
-    const ws = buildExcelSheet('processed', PROC_SECTIONS, year, month, st);
-    finalizeSheet(wb, ws, ym, 20);
     writeFileNoGrid(wb, `재고수불부_가공육_${ym}.xlsx`);
 }
 
