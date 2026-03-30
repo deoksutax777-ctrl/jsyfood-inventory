@@ -300,27 +300,10 @@
 
 <!-- 업로드 패널 -->
 <div id="uploadPanel" style="display:none; background:#fff; border-bottom:1px solid #d0d5dd; padding:16px 24px;">
-    <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start;">
-        <div class="upload-box">
-            <label>참프레시 작업일지</label>
-            <input type="file" accept=".xlsx,.xls" onchange="onFileUpload(this,'chamfresh')">
-        </div>
-        <div class="upload-box">
-            <label>영미트 작업일지</label>
-            <input type="file" accept=".xlsx,.xls" onchange="onFileUpload(this,'youngmeat')">
-        </div>
-        <div class="upload-box">
-            <label>JSY푸드(인천) 작업일지</label>
-            <input type="file" accept=".xlsx,.xls" onchange="onFileUpload(this,'jsy')">
-        </div>
-        <div class="upload-box">
-            <label>인천공장 소스 수불부</label>
-            <input type="file" accept=".xlsx,.xls" onchange="onFileUpload(this,'sauce_incheon')">
-        </div>
-        <div class="upload-box">
-            <label>품목별 입고현황</label>
-            <input type="file" accept=".xlsx,.xls" onchange="onFileUpload(this,'ipgo_list')">
-        </div>
+    <div id="dropZone" style="border:2px dashed var(--gold); border-radius:8px; padding:24px; text-align:center; cursor:pointer; transition:all 0.2s;">
+        <div style="font-size:14px; font-weight:700; color:var(--dark-navy); margin-bottom:8px;">파일을 여기에 드래그하거나 클릭하세요</div>
+        <div style="font-size:12px; color:#999;">참프레시 / 영미트 / JSY푸드 / 인천소스 / 품목별입고현황 — 파일명으로 자동 인식</div>
+        <input type="file" id="dropInput" multiple accept=".xlsx,.xls" style="display:none;" onchange="onMultiFileUpload(this.files)">
     </div>
     <div id="parsePreview" style="margin-top:16px;"></div>
 </div>
@@ -1515,31 +1498,83 @@ function parseWorklogSheet(ws) {
     return { meat: meatResult, proc: procResult };
 }
 
-// 파일 업로드 처리
-function onFileUpload(input, fileType) {
-    const file = input.files[0];
-    if (!file) return;
+// 파일명 → 파일 타입 자동 인식
+function detectFileType(fileName) {
+    const n = fileName.toLowerCase();
+    if (n.includes('참프레시')) return 'chamfresh';
+    if (n.includes('영미트')) return 'youngmeat';
+    if (n.includes('제이에스와이') || n.includes('jsy') || (n.includes('작업일지') && !n.includes('참') && !n.includes('영'))) return 'jsy';
+    if (n.includes('소스') || n.includes('인천공장')) return 'sauce_incheon';
+    if (n.includes('입고현황') || n.includes('입고')) return 'ipgo_list';
+    return null;
+}
 
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        const data = new Uint8Array(e.target.result);
-        const wb = XLSX.read(data, { type: 'array' });
-
-        let parsed = {};
-
-        if (fileType === 'chamfresh' || fileType === 'youngmeat') {
-            parsed = parseChamfreshYoungmeat(wb, fileType);
-        } else if (fileType === 'jsy') {
-            parsed = parseJSY(wb);
-        } else if (fileType === 'sauce_incheon') {
-            parsed = parseSauceIncheon(wb);
-        } else if (fileType === 'ipgo_list') {
-            parsed = parseIpgoList(wb);
+// 단일 파일 처리
+function processFile(file) {
+    return new Promise((resolve) => {
+        const fileType = detectFileType(file.name);
+        if (!fileType) {
+            resolve({ error: file.name });
+            return;
         }
 
-        showParsePreview(parsed, fileType, file.name);
-    };
-    reader.readAsArrayBuffer(file);
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const data = new Uint8Array(e.target.result);
+            const wb = XLSX.read(data, { type: 'array' });
+
+            let parsed = {};
+            if (fileType === 'chamfresh' || fileType === 'youngmeat') {
+                parsed = parseChamfreshYoungmeat(wb, fileType);
+            } else if (fileType === 'jsy') {
+                parsed = parseJSY(wb);
+            } else if (fileType === 'sauce_incheon') {
+                parsed = parseSauceIncheon(wb);
+            } else if (fileType === 'ipgo_list') {
+                parsed = parseIpgoList(wb);
+            }
+
+            showParsePreview(parsed, fileType, file.name);
+            resolve({ ok: file.name, type: fileType });
+        };
+        reader.readAsArrayBuffer(file);
+    });
+}
+
+// 멀티 파일 업로드
+async function onMultiFileUpload(files) {
+    const errors = [];
+    for (const file of files) {
+        const result = await processFile(file);
+        if (result.error) errors.push(result.error);
+    }
+    if (errors.length > 0) {
+        alert('인식 실패 파일:\n' + errors.join('\n') + '\n\n파일명에 참프레시/영미트/제이에스와이/소스/입고현황이 포함되어야 합니다.');
+    }
+}
+
+// 드래그앤드롭 + 클릭 설정
+function initDropZone() {
+    const zone = document.getElementById('dropZone');
+    const input = document.getElementById('dropInput');
+
+    zone.addEventListener('click', () => input.click());
+
+    zone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        zone.style.borderColor = 'var(--dark-navy)';
+        zone.style.background = 'var(--light-blue)';
+    });
+    zone.addEventListener('dragleave', () => {
+        zone.style.borderColor = 'var(--gold)';
+        zone.style.background = '';
+    });
+    zone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        zone.style.borderColor = 'var(--gold)';
+        zone.style.background = '';
+        onMultiFileUpload(e.dataTransfer.files);
+    });
 }
 
 // 참프레시 / 영미트 파서
@@ -1821,6 +1856,7 @@ function init() {
         initDefaultData();
     }
     renderCurrentTab();
+    initDropZone();
 }
 
 init();
