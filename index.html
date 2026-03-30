@@ -1639,14 +1639,26 @@ function parseIpgoList(wb) {
     const codeMap = {
         '수입갈비': '갈비', '살치': '살치살', '갈비본살': '진갈비살',
         '안창살 원육': '안창살', '돈목살': '돈목살', '돈뼈': '돼지뼈',
-        '냉동빽립': '갈비', '냉동볼살(잡육)': '잡육'
+        '냉동빽립': '갈비', '냉동볼살(잡육)': '잡육',
+        '양념막내장 (국내산)': '막내장',
+        '양념깐양 (호주산)': '깐양'
+    };
+
+    // 단위 환산: 팩→kg (4kg/팩)
+    const unitConvert = {
+        '양념막내장 (국내산)': 4, // 팩(4kg) → kg
+        '양념깐양 (호주산)': 4
     };
 
     for (let r = range.s.r + 1; r <= range.e.r; r++) {
         const name = ws[XLSX.utils.encode_cell({r, c: 1})]?.v || '';
         const date = ws[XLSX.utils.encode_cell({r, c: 7})]?.v || '';
-        const qty = parseFloat(ws[XLSX.utils.encode_cell({r, c: 8})]?.v) || 0;
+        let qty = parseFloat(ws[XLSX.utils.encode_cell({r, c: 8})]?.v) || 0;
         const amt = parseFloat(ws[XLSX.utils.encode_cell({r, c: 9})]?.v) || 0;
+
+        // 단위 환산 적용
+        const conv = unitConvert[name.trim()];
+        if (conv) qty = qty * conv;
 
         if (!name || !date) continue;
 
