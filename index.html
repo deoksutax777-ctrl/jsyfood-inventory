@@ -1080,8 +1080,8 @@ function writeFileNoGrid(wb, fileName) {
             z.file(f).async('string').then(xml => {
                 // sheetView에 showGridLines="0" 추가
                 const patched = xml.replace(
-                    /<sheetView(?![^>]*showGridLines)/g,
-                    '<sheetView showGridLines="0"'
+                    /<sheetView /g,
+                    '<sheetView showGridLines="0" '
                 );
                 z.file(f, patched);
             })
