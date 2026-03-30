@@ -959,287 +959,157 @@ function downloadExcel() {
     if (currentTab === 'processed') downloadProcessedExcel(year, month);
 }
 
-function downloadSauceExcel(year, month) {
-    const wb = XLSX.utils.book_new();
-    const ym = `${year % 100}${String(month).padStart(2, '0')}`;
+// ============================================================
+// 엑셀 공통 스타일 (청기와 5색, 맑은고딕 10pt)
+// ============================================================
+const XL_FONT = '맑은 고딕';
+const XL_SZ = 10;
+const XL_BORDER = { top:{style:'thin',color:{rgb:'CCCCCC'}}, bottom:{style:'thin',color:{rgb:'CCCCCC'}}, left:{style:'thin',color:{rgb:'CCCCCC'}}, right:{style:'thin',color:{rgb:'CCCCCC'}} };
 
-    // 스타일 정의
-    const headerStyle = {
-        font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 11 },
-        fill: { fgColor: { rgb: '00338D' } },
-        alignment: { horizontal: 'center', vertical: 'center' },
-        border: { top: {style:'thin'}, bottom: {style:'thin'}, left: {style:'thin'}, right: {style:'thin'} }
+function xlStyles() {
+    const base = { font: { name: XL_FONT, sz: XL_SZ }, border: XL_BORDER };
+    return {
+        title: { font: { name: XL_FONT, bold: true, sz: 14, color: { rgb: '122437' } } },
+        secHeader: { font: { name: XL_FONT, bold: true, sz: 11, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '143C73' } }, alignment: { vertical: 'center' } },
+        header: { font: { name: XL_FONT, bold: true, sz: XL_SZ, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '122437' } }, alignment: { horizontal: 'center', vertical: 'center' }, border: XL_BORDER },
+        gicheo: { font: { name: XL_FONT, bold: true, sz: XL_SZ, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '143C73' } }, alignment: { horizontal: 'center', vertical: 'center' }, border: XL_BORDER },
+        ipgo:   { font: { name: XL_FONT, bold: true, sz: XL_SZ, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '006E32' } }, alignment: { horizontal: 'center', vertical: 'center' }, border: XL_BORDER },
+        chulgo: { font: { name: XL_FONT, bold: true, sz: XL_SZ, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: 'CB4427' } }, alignment: { horizontal: 'center', vertical: 'center' }, border: XL_BORDER },
+        gimal:  { font: { name: XL_FONT, bold: true, sz: XL_SZ, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '122437' } }, alignment: { horizontal: 'center', vertical: 'center' }, border: XL_BORDER },
+        name:   { ...base, font: { name: XL_FONT, sz: XL_SZ, bold: true, color: { rgb: '122437' } }, alignment: { horizontal: 'left', vertical: 'center' } },
+        unit:   { ...base, font: { name: XL_FONT, sz: XL_SZ, color: { rgb: '666666' } }, alignment: { horizontal: 'center', vertical: 'center' } },
+        num:    { ...base, alignment: { horizontal: 'right', vertical: 'center' }, numFmt: '#,##0' },
+        numDec: { ...base, alignment: { horizontal: 'right', vertical: 'center' }, numFmt: '#,##0.00' },
+        numGicheo: { ...base, font: { name: XL_FONT, sz: XL_SZ, color: { rgb: '143C73' } }, alignment: { horizontal: 'right', vertical: 'center' }, numFmt: '#,##0' },
+        numIpgo:   { ...base, font: { name: XL_FONT, sz: XL_SZ, color: { rgb: '006E32' } }, alignment: { horizontal: 'right', vertical: 'center' }, numFmt: '#,##0' },
+        numChulgo: { ...base, font: { name: XL_FONT, sz: XL_SZ, color: { rgb: 'CB4427' } }, alignment: { horizontal: 'right', vertical: 'center' }, numFmt: '#,##0' },
+        numGimal:  { ...base, font: { name: XL_FONT, sz: XL_SZ, color: { rgb: '122437' }, bold: true }, alignment: { horizontal: 'right', vertical: 'center' }, numFmt: '#,##0' },
+        total: { font: { name: XL_FONT, sz: XL_SZ, bold: true }, fill: { fgColor: { rgb: 'F2F2F2' } }, alignment: { horizontal: 'right', vertical: 'center' }, numFmt: '#,##0',
+            border: { top:{style:'medium',color:{rgb:'122437'}}, bottom:{style:'medium',color:{rgb:'122437'}}, left:{style:'thin',color:{rgb:'CCCCCC'}}, right:{style:'thin',color:{rgb:'CCCCCC'}} } },
+        totalName: { font: { name: XL_FONT, sz: XL_SZ, bold: true, color: { rgb: '122437' } }, fill: { fgColor: { rgb: 'F2F2F2' } }, alignment: { horizontal: 'left', vertical: 'center' },
+            border: { top:{style:'medium',color:{rgb:'122437'}}, bottom:{style:'medium',color:{rgb:'122437'}}, left:{style:'thin',color:{rgb:'CCCCCC'}}, right:{style:'thin',color:{rgb:'CCCCCC'}} } },
+        empty: { ...base, fill: { fgColor: { rgb: 'FFFFFF' } } }
     };
-    const gichoStyle = { ...headerStyle, fill: { fgColor: { rgb: '1A5276' } } };
-    const ipgoStyle = { ...headerStyle, fill: { fgColor: { rgb: '1E8449' } } };
-    const chulgoStyle = { ...headerStyle, fill: { fgColor: { rgb: '922B21' } } };
-    const gimalStyle = { ...headerStyle, fill: { fgColor: { rgb: '6C3483' } } };
-    const cellStyle = {
-        border: { top: {style:'thin'}, bottom: {style:'thin'}, left: {style:'thin'}, right: {style:'thin'} },
-        alignment: { horizontal: 'right' },
-        numFmt: '#,##0'
-    };
-    const cellStyleDec = { ...cellStyle, numFmt: '#,##0.00' };
-    const nameStyle = {
-        ...cellStyle,
-        alignment: { horizontal: 'left' },
-        font: { bold: true, color: { rgb: '00338D' } }
-    };
-    const totalStyle = {
-        ...cellStyle,
-        font: { bold: true },
-        fill: { fgColor: { rgb: 'F0F4FF' } },
-        border: { top: {style:'medium'}, bottom: {style:'medium'}, left: {style:'thin'}, right: {style:'thin'} }
-    };
+}
 
+function buildExcelRows(category, sections, year, month, st) {
     const rows = [];
 
-    // 타이틀
-    rows.push([{ v: `${year}년 ${month}월 소스 수불부`, s: { font: { bold: true, sz: 14, color: { rgb: '00338D' } } } }]);
-    rows.push([]);
-
-    SAUCE_SECTIONS.forEach(sec => {
+    sections.forEach(sec => {
         // 섹션 헤더
-        rows.push([{ v: sec.label, s: { font: { bold: true, sz: 12, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '4A6FA5' } } } }]);
-
+        rows.push([{ v: sec.label, s: st.secHeader }]);
         // 컬럼 헤더 1행
         rows.push([
-            { v: '품목명', s: headerStyle }, { v: '단위', s: headerStyle },
-            { v: '기초', s: gichoStyle }, { v: '', s: gichoStyle }, { v: '', s: gichoStyle },
-            { v: '입고', s: ipgoStyle }, { v: '', s: ipgoStyle }, { v: '', s: ipgoStyle },
-            { v: '출고', s: chulgoStyle }, { v: '', s: chulgoStyle }, { v: '', s: chulgoStyle },
-            { v: '기말', s: gimalStyle }, { v: '', s: gimalStyle }, { v: '', s: gimalStyle }
+            { v: '품목명', s: st.header }, { v: '단위', s: st.header },
+            { v: '기초', s: st.gicheo }, { v: '', s: st.gicheo }, { v: '', s: st.gicheo },
+            { v: '입고', s: st.ipgo }, { v: '', s: st.ipgo }, { v: '', s: st.ipgo },
+            { v: '출고', s: st.chulgo }, { v: '', s: st.chulgo }, { v: '', s: st.chulgo },
+            { v: '기말', s: st.gimal }, { v: '', s: st.gimal }, { v: '', s: st.gimal }
         ]);
         // 컬럼 헤더 2행
         rows.push([
-            { v: '', s: headerStyle }, { v: '', s: headerStyle },
-            { v: '수량', s: gichoStyle }, { v: '단가', s: gichoStyle }, { v: '금액', s: gichoStyle },
-            { v: '수량', s: ipgoStyle }, { v: '단가', s: ipgoStyle }, { v: '금액', s: ipgoStyle },
-            { v: '수량', s: chulgoStyle }, { v: '단가', s: chulgoStyle }, { v: '금액', s: chulgoStyle },
-            { v: '수량', s: gimalStyle }, { v: '단가', s: gimalStyle }, { v: '금액', s: gimalStyle }
+            { v: '', s: st.header }, { v: '', s: st.header },
+            { v: '수량', s: st.gicheo }, { v: '단가', s: st.gicheo }, { v: '금액', s: st.gicheo },
+            { v: '수량', s: st.ipgo }, { v: '단가', s: st.ipgo }, { v: '금액', s: st.ipgo },
+            { v: '수량', s: st.chulgo }, { v: '단가', s: st.chulgo }, { v: '금액', s: st.chulgo },
+            { v: '수량', s: st.gimal }, { v: '단가', s: st.gimal }, { v: '금액', s: st.gimal }
         ]);
 
-        let totals = { gichoAmt: 0, ipgoAmt: 0, chulgoAmt: 0, gimalAmt: 0 };
+        let tots = { gichoAmt: 0, ipgoAmt: 0, chulgoAmt: 0, gimalAmt: 0 };
 
         sec.items.forEach(item => {
-            const d = getItemData('sauce', sec.key, item.name, year, month);
-            totals.gichoAmt += d.gichoAmt;
-            totals.ipgoAmt += d.ipgoAmt;
-            totals.chulgoAmt += d.chulgoAmt;
-            totals.gimalAmt += d.gimalAmt;
+            const d = getItemData(category, sec.key, item.name, year, month);
+            tots.gichoAmt += d.gichoAmt; tots.ipgoAmt += d.ipgoAmt;
+            tots.chulgoAmt += d.chulgoAmt; tots.gimalAmt += d.gimalAmt;
 
             rows.push([
-                { v: item.name, s: nameStyle }, { v: item.unit, s: { ...cellStyle, alignment: { horizontal: 'center' } } },
-                { v: d.gichoQty, s: cellStyleDec }, { v: d.gichoPrice, s: cellStyle }, { v: Math.round(d.gichoAmt), s: cellStyle },
-                { v: d.ipgoQty, s: cellStyleDec }, { v: d.ipgoPrice, s: cellStyle }, { v: Math.round(d.ipgoAmt), s: cellStyle },
-                { v: d.chulgoQty, s: cellStyleDec }, { v: d.chulgoPrice, s: cellStyle }, { v: Math.round(d.chulgoAmt), s: cellStyle },
-                { v: d.gimalQty, s: cellStyleDec }, { v: d.gimalPrice, s: cellStyle }, { v: Math.round(d.gimalAmt), s: cellStyle }
+                { v: item.name, s: st.name }, { v: item.unit, s: st.unit },
+                { v: d.gichoQty, s: { ...st.numDec, font: { ...st.numGicheo.font } } },
+                { v: Math.round(d.gichoPrice), s: st.numGicheo },
+                { v: Math.round(d.gichoAmt), s: st.numGicheo },
+                { v: d.ipgoQty, s: { ...st.numDec, font: { ...st.numIpgo.font } } },
+                { v: Math.round(d.ipgoPrice), s: st.numIpgo },
+                { v: Math.round(d.ipgoAmt), s: st.numIpgo },
+                { v: d.chulgoQty, s: { ...st.numDec, font: { ...st.numChulgo.font } } },
+                { v: Math.round(d.chulgoPrice), s: st.numChulgo },
+                { v: Math.round(d.chulgoAmt), s: st.numChulgo },
+                { v: d.gimalQty, s: { ...st.numDec, font: { ...st.numGimal.font } } },
+                { v: Math.round(d.gimalPrice), s: st.numGimal },
+                { v: Math.round(d.gimalAmt), s: st.numGimal }
             ]);
         });
 
-        // 합계
+        // 합계행
         rows.push([
-            { v: '합계', s: totalStyle }, { v: '', s: totalStyle },
-            { v: '', s: totalStyle }, { v: '', s: totalStyle }, { v: Math.round(totals.gichoAmt), s: totalStyle },
-            { v: '', s: totalStyle }, { v: '', s: totalStyle }, { v: Math.round(totals.ipgoAmt), s: totalStyle },
-            { v: '', s: totalStyle }, { v: '', s: totalStyle }, { v: Math.round(totals.chulgoAmt), s: totalStyle },
-            { v: '', s: totalStyle }, { v: '', s: totalStyle }, { v: Math.round(totals.gimalAmt), s: totalStyle }
+            { v: '합계', s: st.totalName }, { v: '', s: st.total },
+            { v: '', s: st.total }, { v: '', s: st.total }, { v: Math.round(tots.gichoAmt), s: st.total },
+            { v: '', s: st.total }, { v: '', s: st.total }, { v: Math.round(tots.ipgoAmt), s: st.total },
+            { v: '', s: st.total }, { v: '', s: st.total }, { v: Math.round(tots.chulgoAmt), s: st.total },
+            { v: '', s: st.total }, { v: '', s: st.total }, { v: Math.round(tots.gimalAmt), s: st.total }
         ]);
-        rows.push([]);
+        rows.push([]); // 빈 행 (섹션 구분)
     });
 
-    const ws = XLSX.utils.aoa_to_sheet(rows);
+    return rows;
+}
 
+function finalizeSheet(wb, ws, sheetName, nameColWidth) {
     // 열 너비
     ws['!cols'] = [
-        { wch: 16 }, { wch: 8 },
-        { wch: 10 }, { wch: 12 }, { wch: 14 },
-        { wch: 10 }, { wch: 12 }, { wch: 14 },
-        { wch: 10 }, { wch: 12 }, { wch: 14 },
-        { wch: 10 }, { wch: 12 }, { wch: 14 }
+        { wch: nameColWidth || 16 }, { wch: 7 },
+        { wch: 10 }, { wch: 11 }, { wch: 13 },
+        { wch: 10 }, { wch: 11 }, { wch: 13 },
+        { wch: 10 }, { wch: 11 }, { wch: 13 },
+        { wch: 10 }, { wch: 11 }, { wch: 13 }
     ];
+    // 행 높이 (기본 18)
+    if (!ws['!rows']) ws['!rows'] = [];
+    // 눈금선 숨기기
+    ws['!sheetViews'] = [{ showGridLines: false }];
 
-    // 병합: 기초/입고/출고/기말 헤더
-    // (병합은 섹션마다 반복되므로 생략 - 2행 헤더로 대체)
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+}
 
-    XLSX.utils.book_append_sheet(wb, ws, ym);
+function downloadSauceExcel(year, month) {
+    const wb = XLSX.utils.book_new();
+    const ym = `${year % 100}${String(month).padStart(2, '0')}`;
+    const st = xlStyles();
+
+    const rows = [[{ v: `${year}년 ${month}월 소스 수불부`, s: st.title }], []];
+    rows.push(...buildExcelRows('sauce', SAUCE_SECTIONS, year, month, st));
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    finalizeSheet(wb, ws, ym, 16);
     XLSX.writeFile(wb, `재고수불부_소스_${ym}.xlsx`);
 }
 
 function downloadMeatExcel(year, month) {
     const wb = XLSX.utils.book_new();
     const ym = `${year % 100}${String(month).padStart(2, '0')}`;
-
-    const headerStyle = {
-        font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 11 },
-        fill: { fgColor: { rgb: '122437' } },
-        alignment: { horizontal: 'center', vertical: 'center' },
-        border: { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} }
-    };
-    const gichoStyle = { ...headerStyle, fill: { fgColor: { rgb: '143C73' } } };
-    const ipgoStyle = { ...headerStyle, fill: { fgColor: { rgb: '006E32' } } };
-    const chulgoStyle = { ...headerStyle, fill: { fgColor: { rgb: 'CB4427' } } };
-    const gimalStyle = { ...headerStyle, fill: { fgColor: { rgb: '122437' } } };
-    const cellStyle = {
-        border: { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} },
-        alignment: { horizontal: 'right' },
-        numFmt: '#,##0'
-    };
-    const cellStyleDec = { ...cellStyle, numFmt: '#,##0.00' };
-    const nameStyle = {
-        ...cellStyle,
-        alignment: { horizontal: 'left' },
-        font: { bold: true, color: { rgb: '122437' } }
-    };
-    const totalStyle = {
-        ...cellStyle,
-        font: { bold: true },
-        fill: { fgColor: { rgb: 'F8F8F8' } },
-        border: { top:{style:'medium'}, bottom:{style:'medium'}, left:{style:'thin'}, right:{style:'thin'} }
-    };
+    const st = xlStyles();
 
     calcMeatTotals(year, month);
 
-    const rows = [];
-    rows.push([{ v: `${year}년 ${month}월 원육 수불부`, s: { font: { bold: true, sz: 14, color: { rgb: '122437' } } } }]);
-    rows.push([]);
-
-    MEAT_SECTIONS.forEach(sec => {
-        rows.push([{ v: sec.label, s: { font: { bold: true, sz: 12, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '143C73' } } } }]);
-        rows.push([
-            { v: '품목명', s: headerStyle }, { v: '단위', s: headerStyle },
-            { v: '기초', s: gichoStyle }, { v: '', s: gichoStyle }, { v: '', s: gichoStyle },
-            { v: '입고', s: ipgoStyle }, { v: '', s: ipgoStyle }, { v: '', s: ipgoStyle },
-            { v: '출고', s: chulgoStyle }, { v: '', s: chulgoStyle }, { v: '', s: chulgoStyle },
-            { v: '기말', s: gimalStyle }, { v: '', s: gimalStyle }, { v: '', s: gimalStyle }
-        ]);
-        rows.push([
-            { v: '', s: headerStyle }, { v: '', s: headerStyle },
-            { v: '수량', s: gichoStyle }, { v: '단가', s: gichoStyle }, { v: '금액', s: gichoStyle },
-            { v: '수량', s: ipgoStyle }, { v: '단가', s: ipgoStyle }, { v: '금액', s: ipgoStyle },
-            { v: '수량', s: chulgoStyle }, { v: '단가', s: chulgoStyle }, { v: '금액', s: chulgoStyle },
-            { v: '수량', s: gimalStyle }, { v: '단가', s: gimalStyle }, { v: '금액', s: gimalStyle }
-        ]);
-
-        let tots = { gichoAmt: 0, ipgoAmt: 0, chulgoAmt: 0, gimalAmt: 0 };
-
-        sec.items.forEach(item => {
-            const d = getItemData('meat', sec.key, item.name, year, month);
-            tots.gichoAmt += d.gichoAmt;
-            tots.ipgoAmt += d.ipgoAmt;
-            tots.chulgoAmt += d.chulgoAmt;
-            tots.gimalAmt += d.gimalAmt;
-
-            rows.push([
-                { v: item.name, s: nameStyle }, { v: item.unit, s: { ...cellStyle, alignment: { horizontal: 'center' } } },
-                { v: d.gichoQty, s: cellStyleDec }, { v: Math.round(d.gichoPrice), s: cellStyle }, { v: Math.round(d.gichoAmt), s: cellStyle },
-                { v: d.ipgoQty, s: cellStyleDec }, { v: Math.round(d.ipgoPrice), s: cellStyle }, { v: Math.round(d.ipgoAmt), s: cellStyle },
-                { v: d.chulgoQty, s: cellStyleDec }, { v: Math.round(d.chulgoPrice), s: cellStyle }, { v: Math.round(d.chulgoAmt), s: cellStyle },
-                { v: d.gimalQty, s: cellStyleDec }, { v: Math.round(d.gimalPrice), s: cellStyle }, { v: Math.round(d.gimalAmt), s: cellStyle }
-            ]);
-        });
-
-        rows.push([
-            { v: '합계', s: totalStyle }, { v: '', s: totalStyle },
-            { v: '', s: totalStyle }, { v: '', s: totalStyle }, { v: Math.round(tots.gichoAmt), s: totalStyle },
-            { v: '', s: totalStyle }, { v: '', s: totalStyle }, { v: Math.round(tots.ipgoAmt), s: totalStyle },
-            { v: '', s: totalStyle }, { v: '', s: totalStyle }, { v: Math.round(tots.chulgoAmt), s: totalStyle },
-            { v: '', s: totalStyle }, { v: '', s: totalStyle }, { v: Math.round(tots.gimalAmt), s: totalStyle }
-        ]);
-        rows.push([]);
-    });
+    const rows = [[{ v: `${year}년 ${month}월 원육 수불부`, s: st.title }], []];
+    rows.push(...buildExcelRows('meat', MEAT_SECTIONS, year, month, st));
 
     const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [
-        { wch: 12 }, { wch: 6 },
-        { wch: 10 }, { wch: 12 }, { wch: 14 },
-        { wch: 10 }, { wch: 12 }, { wch: 14 },
-        { wch: 10 }, { wch: 12 }, { wch: 14 },
-        { wch: 10 }, { wch: 12 }, { wch: 14 }
-    ];
-
-    XLSX.utils.book_append_sheet(wb, ws, ym);
+    finalizeSheet(wb, ws, ym, 12);
     XLSX.writeFile(wb, `재고수불부_원육_${ym}.xlsx`);
 }
 
 function downloadProcessedExcel(year, month) {
     const wb = XLSX.utils.book_new();
     const ym = `${year % 100}${String(month).padStart(2, '0')}`;
-
-    const headerStyle = {
-        font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 11 },
-        fill: { fgColor: { rgb: '122437' } },
-        alignment: { horizontal: 'center', vertical: 'center' },
-        border: { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} }
-    };
-    const gichoStyle = { ...headerStyle, fill: { fgColor: { rgb: '143C73' } } };
-    const ipgoStyle = { ...headerStyle, fill: { fgColor: { rgb: '006E32' } } };
-    const chulgoStyle = { ...headerStyle, fill: { fgColor: { rgb: 'CB4427' } } };
-    const gimalStyle = { ...headerStyle, fill: { fgColor: { rgb: '122437' } } };
-    const cellStyle = {
-        border: { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} },
-        alignment: { horizontal: 'right' }, numFmt: '#,##0'
-    };
-    const cellStyleDec = { ...cellStyle, numFmt: '#,##0.00' };
-    const nameStyle = { ...cellStyle, alignment: { horizontal: 'left' }, font: { bold: true, color: { rgb: '122437' } } };
-    const totalStyle = { ...cellStyle, font: { bold: true }, fill: { fgColor: { rgb: 'F8F8F8' } },
-        border: { top:{style:'medium'}, bottom:{style:'medium'}, left:{style:'thin'}, right:{style:'thin'} } };
+    const st = xlStyles();
 
     calcProcTotals(year, month);
 
-    const rows = [];
-    rows.push([{ v: `${year}년 ${month}월 가공육 수불부`, s: { font: { bold: true, sz: 14, color: { rgb: '122437' } } } }]);
-    rows.push([]);
-
-    PROC_SECTIONS.forEach(sec => {
-        rows.push([{ v: sec.label, s: { font: { bold: true, sz: 12, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '143C73' } } } }]);
-        rows.push([
-            { v: '품목명', s: headerStyle }, { v: '단위', s: headerStyle },
-            { v: '기초', s: gichoStyle }, { v: '', s: gichoStyle }, { v: '', s: gichoStyle },
-            { v: '입고', s: ipgoStyle }, { v: '', s: ipgoStyle }, { v: '', s: ipgoStyle },
-            { v: '출고', s: chulgoStyle }, { v: '', s: chulgoStyle }, { v: '', s: chulgoStyle },
-            { v: '기말', s: gimalStyle }, { v: '', s: gimalStyle }, { v: '', s: gimalStyle }
-        ]);
-        rows.push([
-            { v: '', s: headerStyle }, { v: '', s: headerStyle },
-            { v: '수량', s: gichoStyle }, { v: '단가', s: gichoStyle }, { v: '금액', s: gichoStyle },
-            { v: '수량', s: ipgoStyle }, { v: '단가', s: ipgoStyle }, { v: '금액', s: ipgoStyle },
-            { v: '수량', s: chulgoStyle }, { v: '단가', s: chulgoStyle }, { v: '금액', s: chulgoStyle },
-            { v: '수량', s: gimalStyle }, { v: '단가', s: gimalStyle }, { v: '금액', s: gimalStyle }
-        ]);
-
-        let tots = { gichoAmt: 0, ipgoAmt: 0, chulgoAmt: 0, gimalAmt: 0 };
-        sec.items.forEach(item => {
-            const d = getItemData('processed', sec.key, item.name, year, month);
-            tots.gichoAmt += d.gichoAmt; tots.ipgoAmt += d.ipgoAmt;
-            tots.chulgoAmt += d.chulgoAmt; tots.gimalAmt += d.gimalAmt;
-            rows.push([
-                { v: item.name, s: nameStyle }, { v: item.unit, s: { ...cellStyle, alignment: { horizontal: 'center' } } },
-                { v: d.gichoQty, s: cellStyleDec }, { v: Math.round(d.gichoPrice), s: cellStyle }, { v: Math.round(d.gichoAmt), s: cellStyle },
-                { v: d.ipgoQty, s: cellStyleDec }, { v: Math.round(d.ipgoPrice), s: cellStyle }, { v: Math.round(d.ipgoAmt), s: cellStyle },
-                { v: d.chulgoQty, s: cellStyleDec }, { v: Math.round(d.chulgoPrice), s: cellStyle }, { v: Math.round(d.chulgoAmt), s: cellStyle },
-                { v: d.gimalQty, s: cellStyleDec }, { v: Math.round(d.gimalPrice), s: cellStyle }, { v: Math.round(d.gimalAmt), s: cellStyle }
-            ]);
-        });
-        rows.push([
-            { v: '합계', s: totalStyle }, { v: '', s: totalStyle },
-            { v: '', s: totalStyle }, { v: '', s: totalStyle }, { v: Math.round(tots.gichoAmt), s: totalStyle },
-            { v: '', s: totalStyle }, { v: '', s: totalStyle }, { v: Math.round(tots.ipgoAmt), s: totalStyle },
-            { v: '', s: totalStyle }, { v: '', s: totalStyle }, { v: Math.round(tots.chulgoAmt), s: totalStyle },
-            { v: '', s: totalStyle }, { v: '', s: totalStyle }, { v: Math.round(tots.gimalAmt), s: totalStyle }
-        ]);
-        rows.push([]);
-    });
+    const rows = [[{ v: `${year}년 ${month}월 가공육 수불부`, s: st.title }], []];
+    rows.push(...buildExcelRows('processed', PROC_SECTIONS, year, month, st));
 
     const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [
-        { wch: 20 }, { wch: 6 },
-        { wch: 10 }, { wch: 12 }, { wch: 14 },
-        { wch: 10 }, { wch: 12 }, { wch: 14 },
-        { wch: 10 }, { wch: 12 }, { wch: 14 },
-        { wch: 10 }, { wch: 12 }, { wch: 14 }
-    ];
-    XLSX.utils.book_append_sheet(wb, ws, ym);
+    finalizeSheet(wb, ws, ym, 20);
     XLSX.writeFile(wb, `재고수불부_가공육_${ym}.xlsx`);
 }
 
