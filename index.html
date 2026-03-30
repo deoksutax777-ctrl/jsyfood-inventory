@@ -1426,42 +1426,93 @@ function parseSheetYM(sheetName) {
     return null;
 }
 
-// 작업일지 시트 파싱 (공통 로직)
-function parseWorklogSheet(ws, knownItems) {
-    const result = {};
+// 작업일지 시트 파싱 (섹션 분리: 원육 vs 가공육)
+function parseWorklogSheet(ws) {
+    const meatResult = {};  // 원육 섹션
+    const procResult = {};  // 가공육 섹션
     const maxRow = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']).e.r + 1 : 0;
 
+    const meatNames = MEAT_ITEMS.map(i => i.name);
+    const procNames = PROC_ITEMS.map(i => i.name);
+    const sauceNames = [...SAUCE_ITEMS.raw.map(i => i.name), ...SAUCE_ITEMS.product.map(i => i.name)];
+
+    let currentSection = null; // 'meat', 'proc', 'sauce'
     let currentItem = null;
+    let currentTarget = null;
+
     for (let r = 1; r <= maxRow; r++) {
+        const aCell = ws[XLSX.utils.encode_cell({r: r-1, c: 0})]; // A열
         const bCell = ws[XLSX.utils.encode_cell({r: r-1, c: 1})]; // B열
         const dCell = ws[XLSX.utils.encode_cell({r: r-1, c: 3})]; // D열
         const eCell = ws[XLSX.utils.encode_cell({r: r-1, c: 4})]; // E열
 
+        const aVal = aCell ? String(aCell.v || '').trim() : '';
         const bVal = bCell ? String(bCell.v || '').trim() : '';
         const dVal = dCell ? String(dCell.v || '').trim() : '';
         const eVal = eCell ? parseFloat(eCell.v) || 0 : 0;
 
+        // 섹션 헤더 감지: "1. 원육", "2. 가공육", "1. 원재료", "2. 제품" 등
+        if (bVal.match(/^1\.\s*원육/) || bVal.match(/^1\.\s*원재료/)) {
+            currentSection = bVal.includes('원재료') ? 'sauce' : 'meat';
+            currentItem = null;
+            continue;
+        }
+        if (bVal.match(/^2\.\s*가공육/) || bVal.match(/^2\.\s*제품/)) {
+            currentSection = bVal.includes('제품') ? 'sauce_prod' : 'proc';
+            currentItem = null;
+            continue;
+        }
+        if (bVal.match(/^3\.\s*/)) {
+            currentSection = null; // 3번 이후 섹션은 무시
+            currentItem = null;
+            continue;
+        }
+
+        // 섹션이 감지 안 됐으면 품목명으로 추론
+        const normalized = normalizeName(bVal);
+
         // 새 품목 시작
         if (bVal && bVal !== '품목' && dVal === '기초') {
-            const normalized = normalizeName(bVal);
-            if (knownItems.includes(normalized)) {
+            // 섹션이 명확하면 해당 섹션 사용, 아니면 품목명으로 추론
+            let target = null;
+            if (currentSection === 'meat' && meatNames.includes(normalized)) {
+                target = meatResult;
+            } else if (currentSection === 'proc' && procNames.includes(normalized)) {
+                target = procResult;
+            } else if (currentSection === 'sauce' && sauceNames.includes(normalized)) {
+                target = meatResult; // sauce는 별도 처리 (임시로 meat에)
+            } else if (currentSection === 'sauce_prod' && sauceNames.includes(normalized)) {
+                target = procResult; // sauce 제품
+            } else if (!currentSection) {
+                // 섹션 헤더 없는 경우 품목명으로 추론
+                if (meatNames.includes(normalized)) target = meatResult;
+                else if (procNames.includes(normalized)) target = procResult;
+            }
+
+            if (target) {
                 currentItem = normalized;
-                if (!result[currentItem]) result[currentItem] = {};
-                result[currentItem].gicho = eVal;
+                currentTarget = target;
+                if (!currentTarget[currentItem]) currentTarget[currentItem] = {};
+                currentTarget[currentItem].gicho = eVal;
             } else {
                 currentItem = null;
+                currentTarget = null;
             }
             continue;
         }
 
         // 현재 품목의 수불 데이터
-        if (currentItem && dVal) {
-            if (dVal === '입고') result[currentItem].ipgo = eVal;
-            if (dVal === '출고') result[currentItem].chulgo = eVal;
-            if (dVal === '기말') result[currentItem].gimal = eVal;
+        if (currentItem && currentTarget && dVal) {
+            if (dVal === '입고') currentTarget[currentItem].ipgo = eVal;
+            if (dVal === '출고') currentTarget[currentItem].chulgo = eVal;
+            if (dVal === '기말') {
+                currentTarget[currentItem].gimal = eVal;
+                currentItem = null; // 품목 완료
+            }
         }
     }
-    return result;
+
+    return { meat: meatResult, proc: procResult };
 }
 
 // 파일 업로드 처리
@@ -1493,20 +1544,16 @@ function onFileUpload(input, fileType) {
 
 // 참프레시 / 영미트 파서
 function parseChamfreshYoungmeat(wb, factory) {
-    const allItems = [
-        ...MEAT_ITEMS.map(i => i.name),
-        ...PROC_ITEMS.map(i => i.name)
-    ];
     const result = { factory, months: {} };
 
     wb.SheetNames.forEach(sn => {
         const ym = parseSheetYM(sn);
         if (!ym) return;
         const ws = wb.Sheets[sn];
-        const items = parseWorklogSheet(ws, allItems);
+        const { meat, proc } = parseWorklogSheet(ws);
 
         const key = `${ym.year}-${ym.month}`;
-        result.months[key] = { year: ym.year, month: ym.month, items };
+        result.months[key] = { year: ym.year, month: ym.month, meat, proc };
     });
 
     return result;
@@ -1514,22 +1561,16 @@ function parseChamfreshYoungmeat(wb, factory) {
 
 // JSY(인천) 파서
 function parseJSY(wb) {
-    const sauceItems = SAUCE_ITEMS.raw.map(i => i.name)
-        .concat(SAUCE_ITEMS.product.map(i => i.name));
-    const meatItems = MEAT_ITEMS.map(i => i.name);
-    const procItems = PROC_ITEMS.map(i => i.name);
-    const allItems = [...new Set([...sauceItems, ...meatItems, ...procItems])];
-
     const result = { factory: 'incheon', months: {} };
 
     wb.SheetNames.forEach(sn => {
         const ym = parseSheetYM(sn);
         if (!ym) return;
         const ws = wb.Sheets[sn];
-        const items = parseWorklogSheet(ws, allItems);
+        const { meat, proc } = parseWorklogSheet(ws);
 
         const key = `${ym.year}-${ym.month}`;
-        result.months[key] = { year: ym.year, month: ym.month, items };
+        result.months[key] = { year: ym.year, month: ym.month, meat, proc };
     });
 
     return result;
@@ -1537,18 +1578,17 @@ function parseJSY(wb) {
 
 // 인천 소스 파서
 function parseSauceIncheon(wb) {
-    const sauceItems = SAUCE_ITEMS.raw.map(i => i.name)
-        .concat(SAUCE_ITEMS.product.map(i => i.name));
     const result = { factory: 'sauce_incheon', months: {} };
 
     wb.SheetNames.forEach(sn => {
         const ym = parseSheetYM(sn);
         if (!ym) return;
         const ws = wb.Sheets[sn];
-        const items = parseWorklogSheet(ws, sauceItems);
+        const { meat, proc } = parseWorklogSheet(ws);
 
         const key = `${ym.year}-${ym.month}`;
-        result.months[key] = { year: ym.year, month: ym.month, items };
+        // 소스는 meat=원재료, proc=제품
+        result.months[key] = { year: ym.year, month: ym.month, meat, proc };
     });
 
     return result;
@@ -1650,17 +1690,20 @@ function showAllPreviews() {
                         <td>${fmt(val.qty)}</td><td>${fmtAmt(val.amt)}</td><td>${fmtAmt(avgPrice)}</td></tr>`;
                 });
             } else {
-                Object.entries(items).forEach(([name, val]) => {
-                    const isMeat = MEAT_ITEMS.some(i => i.name === name);
-                    const isProc = PROC_ITEMS.some(i => i.name === name);
-                    const isSauce = SAUCE_ITEMS.raw.some(i => i.name === name) || SAUCE_ITEMS.product.some(i => i.name === name);
-                    const cat = isSauce ? '소스' : isMeat ? '원육' : isProc ? '가공육' : '?';
-                    html += `<tr><td>${name}</td><td>${cat}</td>
-                        <td>${fmt(val.gicho || 0)}</td>
-                        <td class="cell-ipgo">${fmt(val.ipgo || 0)}</td>
-                        <td class="cell-chulgo">${fmt(val.chulgo || 0)}</td>
-                        <td>${fmt(val.gimal || 0)}</td></tr>`;
-                });
+                // 섹션별로 표시
+                const meatItems = items.meat || items.items || {};
+                const procItems = items.proc || {};
+                function renderItems(obj, cat) {
+                    Object.entries(obj).forEach(([name, val]) => {
+                        html += `<tr><td>${name}</td><td>${cat}</td>
+                            <td>${fmt(val.gicho || 0)}</td>
+                            <td class="cell-ipgo">${fmt(val.ipgo || 0)}</td>
+                            <td class="cell-chulgo">${fmt(val.chulgo || 0)}</td>
+                            <td>${fmt(val.gimal || 0)}</td></tr>`;
+                    });
+                }
+                if (Object.keys(meatItems).length) renderItems(meatItems, '원육');
+                if (Object.keys(procItems).length) renderItems(procItems, '가공육');
             }
             html += '</tbody></table>';
         }
@@ -1713,12 +1756,13 @@ function applyAllParsedData() {
                 });
             } else {
                 const factoryKey = (fileType === 'jsy') ? 'incheon' : parsed.factory;
+                const meatItems = items.meat || {};
+                const procItems = items.proc || {};
 
-                Object.entries(items).forEach(([name, val]) => {
+                // 원육 섹션 → meat 카테고리
+                Object.entries(meatItems).forEach(([name, val]) => {
                     const isMeat = MEAT_ITEMS.some(i => i.name === name);
-                    const isProc = PROC_ITEMS.some(i => i.name === name);
-                    const isSauce = SAUCE_ITEMS.raw.some(i => i.name === name) || SAUCE_ITEMS.product.some(i => i.name === name);
-
+                    const isSauce = SAUCE_ITEMS.raw.some(i => i.name === name);
                     if (isMeat) {
                         const d = getItemData('meat', factoryKey, name, year, month);
                         linkGicho('meat', factoryKey, name, year, month);
@@ -1727,6 +1771,20 @@ function applyAllParsedData() {
                         calcWeightedAvg(d);
                         totalApplied++;
                     }
+                    if (isSauce && (fileType === 'jsy' || fileType === 'sauce_incheon')) {
+                        const d = getItemData('sauce', 'raw', name, year, month);
+                        linkGicho('sauce', 'raw', name, year, month);
+                        if (val.ipgo !== undefined) d.ipgoQty = val.ipgo;
+                        if (val.chulgo !== undefined) d.chulgoQty = val.chulgo;
+                        calcWeightedAvg(d);
+                        totalApplied++;
+                    }
+                });
+
+                // 가공육 섹션 → processed 카테고리
+                Object.entries(procItems).forEach(([name, val]) => {
+                    const isProc = PROC_ITEMS.some(i => i.name === name);
+                    const isSauceProd = SAUCE_ITEMS.product.some(i => i.name === name);
                     if (isProc) {
                         const d = getItemData('processed', factoryKey, name, year, month);
                         linkGicho('processed', factoryKey, name, year, month);
@@ -1735,11 +1793,9 @@ function applyAllParsedData() {
                         calcWeightedAvg(d);
                         totalApplied++;
                     }
-                    if (isSauce && (fileType === 'jsy' || fileType === 'sauce_incheon')) {
-                        const isRaw = SAUCE_ITEMS.raw.some(i => i.name === name);
-                        const secKey = isRaw ? 'raw' : factoryKey;
-                        const d = getItemData('sauce', secKey, name, year, month);
-                        linkGicho('sauce', secKey, name, year, month);
+                    if (isSauceProd && (fileType === 'jsy' || fileType === 'sauce_incheon')) {
+                        const d = getItemData('sauce', factoryKey, name, year, month);
+                        linkGicho('sauce', factoryKey, name, year, month);
                         if (val.ipgo !== undefined) d.ipgoQty = val.ipgo;
                         if (val.chulgo !== undefined) d.chulgoQty = val.chulgo;
                         calcWeightedAvg(d);
