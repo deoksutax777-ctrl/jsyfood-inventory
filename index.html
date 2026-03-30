@@ -245,9 +245,7 @@
 <div class="content">
     <div id="tab-sauce" class="tab-content active"></div>
     <div id="tab-meat" class="tab-content"></div>
-    <div id="tab-processed" class="tab-content">
-        <div class="section"><div class="section-header">가공육 수불부 (준비 중)</div></div>
-    </div>
+    <div id="tab-processed" class="tab-content"></div>
 </div>
 
 <div class="footer">JSY Food 재고수불부 v1.0 | 더나은세무법인</div>
@@ -307,6 +305,38 @@ const MEAT_SECTIONS = [
     { key: 'incheon', label: '인천공장', items: MEAT_ITEMS },
     { key: 'chamfresh', label: '참프레시', items: MEAT_ITEMS },
     { key: 'youngmeat', label: '영미트', items: MEAT_ITEMS }
+];
+
+const PROC_ITEMS = [
+    { name: '수원왕갈비(15cm)', unit: '대' },
+    { name: '수원왕갈비(8cm)', unit: '대' },
+    { name: '서울왕갈비(8cm,양념)', unit: '대' },
+    { name: '생갈비', unit: '대' },
+    { name: '생갈비(15cm)', unit: '대' },
+    { name: '양념LA갈비', unit: 'kg' },
+    { name: '돼지갈비', unit: '대' },
+    { name: '돼지갈비(동그랑땡)', unit: 'pack' },
+    { name: '마늘갈비', unit: 'kg' },
+    { name: '양념갈비[선물]', unit: 'pack' },
+    { name: '소불고기[선물]', unit: 'pack' },
+    { name: 'LA갈비[선물]', unit: 'pack' },
+    { name: '양념구이[선물]', unit: 'pack' },
+    { name: '청기와양념구이', unit: '대' },
+    { name: '홍두깨', unit: 'kg' },
+    { name: '안창살', unit: 'kg' },
+    { name: '우설', unit: '봉' },
+    { name: '깐양', unit: 'kg' },
+    { name: '육회', unit: 'kg' },
+    { name: '잡육', unit: 'kg' }
+];
+
+const PROC_FACTORIES = ['incheon', 'chamfresh', 'youngmeat'];
+
+const PROC_SECTIONS = [
+    { key: 'total', label: '합계', items: PROC_ITEMS },
+    { key: 'incheon', label: '인천공장', items: PROC_ITEMS },
+    { key: 'chamfresh', label: '참프레시', items: PROC_ITEMS },
+    { key: 'youngmeat', label: '영미트', items: PROC_ITEMS }
 ];
 
 // ============================================================
@@ -655,6 +685,142 @@ function buildMeatTable(section, year, month, isTotal) {
 }
 
 // ============================================================
+// 가공육 렌더링 (원육과 동일 패턴)
+// ============================================================
+function calcProcTotals(year, month) {
+    PROC_ITEMS.forEach(item => {
+        const total = getItemData('processed', 'total', item.name, year, month);
+        total.gichoQty = 0; total.gichoAmt = 0;
+        total.ipgoQty = 0; total.ipgoAmt = 0;
+        total.chulgoQty = 0; total.chulgoAmt = 0;
+        total.gimalQty = 0; total.gimalAmt = 0;
+
+        PROC_FACTORIES.forEach(fac => {
+            linkGicho('processed', fac, item.name, year, month);
+            const d = getItemData('processed', fac, item.name, year, month);
+            calcWeightedAvg(d);
+
+            total.gichoQty += d.gichoQty;
+            total.gichoAmt += d.gichoAmt;
+            total.ipgoQty += d.ipgoQty;
+            total.ipgoAmt += d.ipgoAmt;
+            total.chulgoQty += d.chulgoQty;
+            total.chulgoAmt += d.chulgoAmt;
+            total.gimalQty += d.gimalQty;
+            total.gimalAmt += d.gimalAmt;
+        });
+
+        total.gichoPrice = total.gichoQty > 0 ? total.gichoAmt / total.gichoQty : 0;
+        total.ipgoPrice = total.ipgoQty > 0 ? total.ipgoAmt / total.ipgoQty : 0;
+        total.chulgoPrice = total.chulgoQty > 0 ? total.chulgoAmt / total.chulgoQty : 0;
+        total.gimalPrice = total.gimalQty > 0 ? total.gimalAmt / total.gimalQty : 0;
+    });
+}
+
+function renderProcessed() {
+    const year = parseInt(document.getElementById('selYear').value);
+    const month = parseInt(document.getElementById('selMonth').value);
+    const container = document.getElementById('tab-processed');
+
+    calcProcTotals(year, month);
+
+    let html = `<div class="section">
+        <div class="section-header">
+            <span>${year}년 ${month}월 가공육 수불부</span>
+            <span style="font-size:11px; font-weight:normal; color:#ccc;">총평균법</span>
+        </div>`;
+
+    PROC_SECTIONS.forEach(sec => {
+        html += `<div class="section-header sub">${sec.label}</div>`;
+        html += buildGenericTable('processed', sec, year, month, sec.key === 'total');
+    });
+
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+// 원육/가공육 공용 테이블 빌더
+function buildGenericTable(category, section, year, month, isTotal) {
+    let html = `<div class="table-wrap"><table>
+        <thead>
+            <tr>
+                <th rowspan="2" style="min-width:140px;">품목명</th>
+                <th rowspan="2" style="min-width:40px;">단위</th>
+                <th colspan="3" class="group-header col-gicheo">기초</th>
+                <th colspan="3" class="group-header col-ipgo">입고</th>
+                <th colspan="3" class="group-header col-chulgo">출고</th>
+                <th colspan="3" class="group-header col-gimal">기말</th>
+            </tr>
+            <tr>
+                <th class="col-gicheo">수량</th><th class="col-gicheo">단가</th><th class="col-gicheo">금액</th>
+                <th class="col-ipgo">수량</th><th class="col-ipgo">단가</th><th class="col-ipgo">금액</th>
+                <th class="col-chulgo">수량</th><th class="col-chulgo">단가</th><th class="col-chulgo">금액</th>
+                <th class="col-gimal">수량</th><th class="col-gimal">단가</th><th class="col-gimal">금액</th>
+            </tr>
+        </thead><tbody>`;
+
+    let totals = { gichoAmt: 0, ipgoAmt: 0, chulgoAmt: 0, gimalAmt: 0 };
+
+    section.items.forEach(item => {
+        const d = getItemData(category, section.key, item.name, year, month);
+        totals.gichoAmt += d.gichoAmt;
+        totals.ipgoAmt += d.ipgoAmt;
+        totals.chulgoAmt += d.chulgoAmt;
+        totals.gimalAmt += d.gimalAmt;
+
+        if (isTotal) {
+            html += `<tr>
+                <td class="item-name">${item.name}</td>
+                <td class="item-unit">${item.unit}</td>
+                <td class="cell-calc cell-gicheo">${fmt(d.gichoQty)}</td>
+                <td class="cell-calc cell-gicheo">${fmt(d.gichoPrice)}</td>
+                <td class="cell-calc cell-gicheo">${fmtAmt(d.gichoAmt)}</td>
+                <td class="cell-calc cell-ipgo">${fmt(d.ipgoQty)}</td>
+                <td class="cell-calc cell-ipgo">${fmt(d.ipgoPrice)}</td>
+                <td class="cell-calc cell-ipgo">${fmtAmt(d.ipgoAmt)}</td>
+                <td class="cell-calc cell-chulgo">${fmt(d.chulgoQty)}</td>
+                <td class="cell-calc cell-chulgo">${fmt(d.chulgoPrice)}</td>
+                <td class="cell-calc cell-chulgo">${fmtAmt(d.chulgoAmt)}</td>
+                <td class="cell-calc cell-gimal ${d.gimalQty < 0 ? 'cell-negative' : ''}">${fmt(d.gimalQty)}</td>
+                <td class="cell-calc cell-gimal">${fmt(d.gimalPrice)}</td>
+                <td class="cell-calc cell-gimal">${fmtAmt(d.gimalAmt)}</td>
+            </tr>`;
+        } else {
+            html += `<tr>
+                <td class="item-name">${item.name}</td>
+                <td class="item-unit">${item.unit}</td>
+                <td class="cell-calc cell-gicheo">${fmt(d.gichoQty)}</td>
+                <td class="cell-calc cell-gicheo">${fmt(d.gichoPrice)}</td>
+                <td class="cell-calc cell-gicheo">${fmtAmt(d.gichoAmt)}</td>
+                <td><input class="cell-input" type="text" value="${d.ipgoQty || ''}"
+                    onchange="onInputChange('${category}','${section.key}','${item.name}','ipgoQty',this.value)"></td>
+                <td><input class="cell-input" type="text" value="${d.ipgoPrice || ''}"
+                    onchange="onInputChange('${category}','${section.key}','${item.name}','ipgoPrice',this.value)"></td>
+                <td class="cell-calc cell-ipgo">${fmtAmt(d.ipgoAmt)}</td>
+                <td><input class="cell-input" type="text" value="${d.chulgoQty || ''}"
+                    onchange="onInputChange('${category}','${section.key}','${item.name}','chulgoQty',this.value)"></td>
+                <td class="cell-calc cell-chulgo">${fmt(d.chulgoPrice)}</td>
+                <td class="cell-calc cell-chulgo">${fmtAmt(d.chulgoAmt)}</td>
+                <td class="cell-calc cell-gimal ${d.gimalQty < 0 ? 'cell-negative' : ''}">${fmt(d.gimalQty)}</td>
+                <td class="cell-calc cell-gimal">${fmt(d.gimalPrice)}</td>
+                <td class="cell-calc cell-gimal">${fmtAmt(d.gimalAmt)}</td>
+            </tr>`;
+        }
+    });
+
+    html += `<tr class="total-row">
+        <td class="item-name">합계</td><td></td>
+        <td></td><td></td><td class="cell-calc">${fmtAmt(totals.gichoAmt)}</td>
+        <td></td><td></td><td class="cell-calc">${fmtAmt(totals.ipgoAmt)}</td>
+        <td></td><td></td><td class="cell-calc">${fmtAmt(totals.chulgoAmt)}</td>
+        <td></td><td></td><td class="cell-calc">${fmtAmt(totals.gimalAmt)}</td>
+    </tr>`;
+
+    html += '</tbody></table></div>';
+    return html;
+}
+
+// ============================================================
 // 입력 처리
 // ============================================================
 function onInputChange(category, section, itemName, field, value) {
@@ -669,6 +835,7 @@ function onInputChange(category, section, itemName, field, value) {
 function renderCurrentTab() {
     if (currentTab === 'sauce') renderSauce();
     if (currentTab === 'meat') renderMeat();
+    if (currentTab === 'processed') renderProcessed();
 }
 
 // ============================================================
@@ -706,6 +873,7 @@ function downloadExcel() {
 
     if (currentTab === 'sauce') downloadSauceExcel(year, month);
     if (currentTab === 'meat') downloadMeatExcel(year, month);
+    if (currentTab === 'processed') downloadProcessedExcel(year, month);
 }
 
 function downloadSauceExcel(year, month) {
@@ -911,6 +1079,87 @@ function downloadMeatExcel(year, month) {
     XLSX.writeFile(wb, `재고수불부_원육_${ym}.xlsx`);
 }
 
+function downloadProcessedExcel(year, month) {
+    const wb = XLSX.utils.book_new();
+    const ym = `${year % 100}${String(month).padStart(2, '0')}`;
+
+    const headerStyle = {
+        font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 11 },
+        fill: { fgColor: { rgb: '122437' } },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        border: { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} }
+    };
+    const gichoStyle = { ...headerStyle, fill: { fgColor: { rgb: '143C73' } } };
+    const ipgoStyle = { ...headerStyle, fill: { fgColor: { rgb: '006E32' } } };
+    const chulgoStyle = { ...headerStyle, fill: { fgColor: { rgb: 'CB4427' } } };
+    const gimalStyle = { ...headerStyle, fill: { fgColor: { rgb: '122437' } } };
+    const cellStyle = {
+        border: { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} },
+        alignment: { horizontal: 'right' }, numFmt: '#,##0'
+    };
+    const cellStyleDec = { ...cellStyle, numFmt: '#,##0.00' };
+    const nameStyle = { ...cellStyle, alignment: { horizontal: 'left' }, font: { bold: true, color: { rgb: '122437' } } };
+    const totalStyle = { ...cellStyle, font: { bold: true }, fill: { fgColor: { rgb: 'F8F8F8' } },
+        border: { top:{style:'medium'}, bottom:{style:'medium'}, left:{style:'thin'}, right:{style:'thin'} } };
+
+    calcProcTotals(year, month);
+
+    const rows = [];
+    rows.push([{ v: `${year}년 ${month}월 가공육 수불부`, s: { font: { bold: true, sz: 14, color: { rgb: '122437' } } } }]);
+    rows.push([]);
+
+    PROC_SECTIONS.forEach(sec => {
+        rows.push([{ v: sec.label, s: { font: { bold: true, sz: 12, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '143C73' } } } }]);
+        rows.push([
+            { v: '품목명', s: headerStyle }, { v: '단위', s: headerStyle },
+            { v: '기초', s: gichoStyle }, { v: '', s: gichoStyle }, { v: '', s: gichoStyle },
+            { v: '입고', s: ipgoStyle }, { v: '', s: ipgoStyle }, { v: '', s: ipgoStyle },
+            { v: '출고', s: chulgoStyle }, { v: '', s: chulgoStyle }, { v: '', s: chulgoStyle },
+            { v: '기말', s: gimalStyle }, { v: '', s: gimalStyle }, { v: '', s: gimalStyle }
+        ]);
+        rows.push([
+            { v: '', s: headerStyle }, { v: '', s: headerStyle },
+            { v: '수량', s: gichoStyle }, { v: '단가', s: gichoStyle }, { v: '금액', s: gichoStyle },
+            { v: '수량', s: ipgoStyle }, { v: '단가', s: ipgoStyle }, { v: '금액', s: ipgoStyle },
+            { v: '수량', s: chulgoStyle }, { v: '단가', s: chulgoStyle }, { v: '금액', s: chulgoStyle },
+            { v: '수량', s: gimalStyle }, { v: '단가', s: gimalStyle }, { v: '금액', s: gimalStyle }
+        ]);
+
+        let tots = { gichoAmt: 0, ipgoAmt: 0, chulgoAmt: 0, gimalAmt: 0 };
+        sec.items.forEach(item => {
+            const d = getItemData('processed', sec.key, item.name, year, month);
+            tots.gichoAmt += d.gichoAmt; tots.ipgoAmt += d.ipgoAmt;
+            tots.chulgoAmt += d.chulgoAmt; tots.gimalAmt += d.gimalAmt;
+            rows.push([
+                { v: item.name, s: nameStyle }, { v: item.unit, s: { ...cellStyle, alignment: { horizontal: 'center' } } },
+                { v: d.gichoQty, s: cellStyleDec }, { v: Math.round(d.gichoPrice), s: cellStyle }, { v: Math.round(d.gichoAmt), s: cellStyle },
+                { v: d.ipgoQty, s: cellStyleDec }, { v: Math.round(d.ipgoPrice), s: cellStyle }, { v: Math.round(d.ipgoAmt), s: cellStyle },
+                { v: d.chulgoQty, s: cellStyleDec }, { v: Math.round(d.chulgoPrice), s: cellStyle }, { v: Math.round(d.chulgoAmt), s: cellStyle },
+                { v: d.gimalQty, s: cellStyleDec }, { v: Math.round(d.gimalPrice), s: cellStyle }, { v: Math.round(d.gimalAmt), s: cellStyle }
+            ]);
+        });
+        rows.push([
+            { v: '합계', s: totalStyle }, { v: '', s: totalStyle },
+            { v: '', s: totalStyle }, { v: '', s: totalStyle }, { v: Math.round(tots.gichoAmt), s: totalStyle },
+            { v: '', s: totalStyle }, { v: '', s: totalStyle }, { v: Math.round(tots.ipgoAmt), s: totalStyle },
+            { v: '', s: totalStyle }, { v: '', s: totalStyle }, { v: Math.round(tots.chulgoAmt), s: totalStyle },
+            { v: '', s: totalStyle }, { v: '', s: totalStyle }, { v: Math.round(tots.gimalAmt), s: totalStyle }
+        ]);
+        rows.push([]);
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [
+        { wch: 20 }, { wch: 6 },
+        { wch: 10 }, { wch: 12 }, { wch: 14 },
+        { wch: 10 }, { wch: 12 }, { wch: 14 },
+        { wch: 10 }, { wch: 12 }, { wch: 14 },
+        { wch: 10 }, { wch: 12 }, { wch: 14 }
+    ];
+    XLSX.utils.book_append_sheet(wb, ws, ym);
+    XLSX.writeFile(wb, `재고수불부_가공육_${ym}.xlsx`);
+}
+
 // ============================================================
 // 기초재고 하드코드 (25년 12월 기말 = 26년 1월 기초)
 // ============================================================
@@ -1015,6 +1264,85 @@ function initDefaultData() {
     Object.entries(meatDefaults).forEach(([section, items]) => {
         Object.entries(items).forEach(([name, val]) => {
             const d = getItemData('meat', section, name, 2026, 1);
+            d.gichoQty = val.qty;
+            d.gichoPrice = val.price;
+            d.gichoAmt = val.qty * val.price;
+        });
+    });
+
+    // 가공육 기초재고 (25년 12월 기말)
+    const procDefaults = {
+        incheon: {
+            '수원왕갈비(15cm)': { qty: 1285, price: 15325.19 },
+            '수원왕갈비(8cm)': { qty: 2600, price: 8810.57 },
+            '서울왕갈비(8cm,양념)': { qty: 2630, price: 6320.32 },
+            '생갈비': { qty: 0, price: 0 },
+            '생갈비(15cm)': { qty: 892, price: 15194.61 },
+            '양념LA갈비': { qty: 0, price: 0 },
+            '돼지갈비': { qty: 0, price: 0 },
+            '돼지갈비(동그랑땡)': { qty: 203, price: 14025.56 },
+            '마늘갈비': { qty: 250, price: 38339.03 },
+            '양념갈비[선물]': { qty: 0, price: 0 },
+            '소불고기[선물]': { qty: 0, price: 0 },
+            'LA갈비[선물]': { qty: 0, price: 0 },
+            '양념구이[선물]': { qty: 0, price: 0 },
+            '청기와양념구이': { qty: 1060, price: 4613.73 },
+            '홍두깨': { qty: 0, price: 0 },
+            '안창살': { qty: 0, price: 0 },
+            '우설': { qty: 0, price: 0 },
+            '깐양': { qty: 0, price: 0 },
+            '육회': { qty: 0, price: 0 },
+            '잡육': { qty: 1247, price: 0 }
+        },
+        chamfresh: {
+            '수원왕갈비(15cm)': { qty: 775, price: 17323.49 },
+            '수원왕갈비(8cm)': { qty: 1210, price: 8981.44 },
+            '서울왕갈비(8cm,양념)': { qty: 4150, price: 7318.68 },
+            '생갈비': { qty: 56, price: 9678.62 },
+            '생갈비(15cm)': { qty: 978, price: 16511.24 },
+            '양념LA갈비': { qty: 0, price: 0 },
+            '돼지갈비': { qty: 0, price: 0 },
+            '돼지갈비(동그랑땡)': { qty: 150, price: 14025.56 },
+            '마늘갈비': { qty: 178, price: 40803.65 },
+            '양념갈비[선물]': { qty: 0, price: 0 },
+            '소불고기[선물]': { qty: 0, price: 0 },
+            'LA갈비[선물]': { qty: 0, price: 0 },
+            '양념구이[선물]': { qty: 0, price: 0 },
+            '청기와양념구이': { qty: 0, price: 0 },
+            '홍두깨': { qty: 0, price: 0 },
+            '안창살': { qty: 0, price: 0 },
+            '우설': { qty: 0, price: 0 },
+            '깐양': { qty: 0, price: 0 },
+            '육회': { qty: 0, price: 0 },
+            '잡육': { qty: 0, price: 0 }
+        },
+        youngmeat: {
+            '수원왕갈비(15cm)': { qty: 815, price: 16208.94 },
+            '수원왕갈비(8cm)': { qty: 3810, price: 9272.31 },
+            '서울왕갈비(8cm,양념)': { qty: 1920, price: 4521.85 },
+            '생갈비': { qty: 0, price: 0 },
+            '생갈비(15cm)': { qty: 560, price: 15983.06 },
+            '양념LA갈비': { qty: 0, price: 0 },
+            '돼지갈비': { qty: 0, price: 0 },
+            '돼지갈비(동그랑땡)': { qty: 177, price: 13754.94 },
+            '마늘갈비': { qty: 290, price: 41266.68 },
+            '양념갈비[선물]': { qty: 0, price: 0 },
+            '소불고기[선물]': { qty: 0, price: 0 },
+            'LA갈비[선물]': { qty: 0, price: 0 },
+            '양념구이[선물]': { qty: 0, price: 0 },
+            '청기와양념구이': { qty: 0, price: 0 },
+            '홍두깨': { qty: 0, price: 0 },
+            '안창살': { qty: 0, price: 0 },
+            '우설': { qty: 0, price: 0 },
+            '깐양': { qty: 0, price: 0 },
+            '육회': { qty: 0, price: 0 },
+            '잡육': { qty: 0, price: 0 }
+        }
+    };
+
+    Object.entries(procDefaults).forEach(([section, items]) => {
+        Object.entries(items).forEach(([name, val]) => {
+            const d = getItemData('processed', section, name, 2026, 1);
             d.gichoQty = val.qty;
             d.gichoPrice = val.price;
             d.gichoAmt = val.qty * val.price;
