@@ -205,6 +205,61 @@
             align-items: center;
             gap: 8px;
         }
+
+        /* Upload */
+        .upload-box {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .upload-box label {
+            font-weight: 600;
+            color: var(--dark-navy);
+            font-size: 12px;
+        }
+        .upload-box input[type="file"] {
+            font-size: 12px;
+        }
+
+        /* Preview */
+        .preview-section {
+            margin-top: 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .preview-header {
+            background: var(--dark-navy);
+            color: var(--white);
+            padding: 8px 12px;
+            font-weight: 600;
+            font-size: 13px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .preview-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        .preview-table th {
+            background: var(--light-blue);
+            color: var(--dark-navy);
+            padding: 6px 8px;
+            text-align: center;
+            font-weight: 600;
+            border-bottom: 1px solid var(--border);
+        }
+        .preview-table td {
+            padding: 5px 8px;
+            border-bottom: 1px solid #eee;
+            text-align: right;
+        }
+        .preview-table td:first-child { text-align: left; font-weight: 600; }
+        .preview-table td:nth-child(2) { text-align: center; }
+        .preview-mismatch { background: #fff3f3; color: var(--red-brown); font-weight: 700; }
+        .preview-ok { color: var(--green); }
     </style>
 </head>
 <body>
@@ -237,8 +292,36 @@
     </div>
     <button class="btn btn-primary" onclick="loadMonth()">조회</button>
     <button class="btn btn-gold" onclick="downloadExcel()">엑셀 다운로드</button>
+    <button class="btn btn-outline" onclick="toggleUploadPanel()">작업일지 업로드</button>
     <button class="btn btn-outline" onclick="saveData()">저장</button>
     <button class="btn btn-outline" onclick="loadSavedData()">불러오기</button>
+</div>
+
+<!-- 업로드 패널 -->
+<div id="uploadPanel" style="display:none; background:#fff; border-bottom:1px solid #d0d5dd; padding:16px 24px;">
+    <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start;">
+        <div class="upload-box">
+            <label>참프레시 작업일지</label>
+            <input type="file" accept=".xlsx,.xls" onchange="onFileUpload(this,'chamfresh')">
+        </div>
+        <div class="upload-box">
+            <label>영미트 작업일지</label>
+            <input type="file" accept=".xlsx,.xls" onchange="onFileUpload(this,'youngmeat')">
+        </div>
+        <div class="upload-box">
+            <label>JSY푸드(인천) 작업일지</label>
+            <input type="file" accept=".xlsx,.xls" onchange="onFileUpload(this,'jsy')">
+        </div>
+        <div class="upload-box">
+            <label>인천공장 소스 수불부</label>
+            <input type="file" accept=".xlsx,.xls" onchange="onFileUpload(this,'sauce_incheon')">
+        </div>
+        <div class="upload-box">
+            <label>품목별 입고현황</label>
+            <input type="file" accept=".xlsx,.xls" onchange="onFileUpload(this,'ipgo_list')">
+        </div>
+    </div>
+    <div id="parsePreview" style="margin-top:16px;"></div>
 </div>
 
 <!-- 소스 탭 -->
@@ -1348,6 +1431,367 @@ function initDefaultData() {
             d.gichoAmt = val.qty * val.price;
         });
     });
+}
+
+// ============================================================
+// 업로드 & 파싱
+// ============================================================
+function toggleUploadPanel() {
+    const panel = document.getElementById('uploadPanel');
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+// 품목명 매핑 (작업일지 → 수불부)
+const NAME_MAP = {
+    '정종(백화수복)': '정종', '후추가루': '후추',
+    '갈아만든 배': '갈아만든배', '아침에 사과주스': '아침에사과',
+    '생갈비(7.5cm)': '생갈비', '수원왕갈비(7.5cm)': '수원왕갈비(8cm)',
+    '서울왕갈비(7.5cm,양념)': '서울왕갈비(8cm,양념)',
+    '돈목살 슬라이스': '돈목살'
+};
+
+function normalizeName(raw) {
+    const clean = raw.replace(/\n.*/s, '').trim();
+    return NAME_MAP[clean] || clean;
+}
+
+// 시트명 → 연도/월 파싱
+function parseSheetYM(sheetName) {
+    // "2601" → {year:2026, month:1}, "25.12" → {year:2025, month:12}, "23.4월" → {year:2023, month:4}
+    let m;
+    if ((m = sheetName.match(/^(\d{2})(\d{2})$/))) {
+        return { year: 2000 + parseInt(m[1]), month: parseInt(m[2]) };
+    }
+    if ((m = sheetName.match(/^(\d{2})\.(\d{1,2})월?$/))) {
+        return { year: 2000 + parseInt(m[1]), month: parseInt(m[2]) };
+    }
+    if ((m = sheetName.match(/^(\d{1,2})월$/))) {
+        return { year: 2023, month: parseInt(m[1]) }; // 기본 23년
+    }
+    return null;
+}
+
+// 작업일지 시트 파싱 (공통 로직)
+function parseWorklogSheet(ws, knownItems) {
+    const result = {};
+    const maxRow = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']).e.r + 1 : 0;
+
+    let currentItem = null;
+    for (let r = 1; r <= maxRow; r++) {
+        const bCell = ws[XLSX.utils.encode_cell({r: r-1, c: 1})]; // B열
+        const dCell = ws[XLSX.utils.encode_cell({r: r-1, c: 3})]; // D열
+        const eCell = ws[XLSX.utils.encode_cell({r: r-1, c: 4})]; // E열
+
+        const bVal = bCell ? String(bCell.v || '').trim() : '';
+        const dVal = dCell ? String(dCell.v || '').trim() : '';
+        const eVal = eCell ? parseFloat(eCell.v) || 0 : 0;
+
+        // 새 품목 시작
+        if (bVal && bVal !== '품목' && dVal === '기초') {
+            const normalized = normalizeName(bVal);
+            if (knownItems.includes(normalized)) {
+                currentItem = normalized;
+                if (!result[currentItem]) result[currentItem] = {};
+                result[currentItem].gicho = eVal;
+            } else {
+                currentItem = null;
+            }
+            continue;
+        }
+
+        // 현재 품목의 수불 데이터
+        if (currentItem && dVal) {
+            if (dVal === '입고') result[currentItem].ipgo = eVal;
+            if (dVal === '출고') result[currentItem].chulgo = eVal;
+            if (dVal === '기말') result[currentItem].gimal = eVal;
+        }
+    }
+    return result;
+}
+
+// 파일 업로드 처리
+function onFileUpload(input, fileType) {
+    const file = input.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data, { type: 'array' });
+
+        let parsed = {};
+
+        if (fileType === 'chamfresh' || fileType === 'youngmeat') {
+            parsed = parseChamfreshYoungmeat(wb, fileType);
+        } else if (fileType === 'jsy') {
+            parsed = parseJSY(wb);
+        } else if (fileType === 'sauce_incheon') {
+            parsed = parseSauceIncheon(wb);
+        } else if (fileType === 'ipgo_list') {
+            parsed = parseIpgoList(wb);
+        }
+
+        showParsePreview(parsed, fileType, file.name);
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+// 참프레시 / 영미트 파서
+function parseChamfreshYoungmeat(wb, factory) {
+    const allItems = [
+        ...MEAT_ITEMS.map(i => i.name),
+        ...PROC_ITEMS.map(i => i.name)
+    ];
+    const result = { factory, months: {} };
+
+    wb.SheetNames.forEach(sn => {
+        const ym = parseSheetYM(sn);
+        if (!ym) return;
+        const ws = wb.Sheets[sn];
+        const items = parseWorklogSheet(ws, allItems);
+
+        const key = `${ym.year}-${ym.month}`;
+        result.months[key] = { year: ym.year, month: ym.month, items };
+    });
+
+    return result;
+}
+
+// JSY(인천) 파서
+function parseJSY(wb) {
+    const sauceItems = SAUCE_ITEMS.raw.map(i => i.name)
+        .concat(SAUCE_ITEMS.product.map(i => i.name));
+    const meatItems = MEAT_ITEMS.map(i => i.name);
+    const procItems = PROC_ITEMS.map(i => i.name);
+    const allItems = [...new Set([...sauceItems, ...meatItems, ...procItems])];
+
+    const result = { factory: 'incheon', months: {} };
+
+    wb.SheetNames.forEach(sn => {
+        const ym = parseSheetYM(sn);
+        if (!ym) return;
+        const ws = wb.Sheets[sn];
+        const items = parseWorklogSheet(ws, allItems);
+
+        const key = `${ym.year}-${ym.month}`;
+        result.months[key] = { year: ym.year, month: ym.month, items };
+    });
+
+    return result;
+}
+
+// 인천 소스 파서
+function parseSauceIncheon(wb) {
+    const sauceItems = SAUCE_ITEMS.raw.map(i => i.name)
+        .concat(SAUCE_ITEMS.product.map(i => i.name));
+    const result = { factory: 'sauce_incheon', months: {} };
+
+    wb.SheetNames.forEach(sn => {
+        const ym = parseSheetYM(sn);
+        if (!ym) return;
+        const ws = wb.Sheets[sn];
+        const items = parseWorklogSheet(ws, sauceItems);
+
+        const key = `${ym.year}-${ym.month}`;
+        result.months[key] = { year: ym.year, month: ym.month, items };
+    });
+
+    return result;
+}
+
+// 품목별 입고현황 파서
+function parseIpgoList(wb) {
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const range = XLSX.utils.decode_range(ws['!ref']);
+    const records = [];
+
+    // 품목코드 → 수불부 품목 매핑
+    const codeMap = {
+        '수입갈비': '갈비', '살치': '살치살', '갈비본살': '진갈비살',
+        '안창살 원육': '안창살', '돈목살': '돈목살', '돈뼈': '돼지뼈',
+        '냉동빽립': '갈비', '냉동볼살(잡육)': '잡육'
+    };
+
+    for (let r = range.s.r + 1; r <= range.e.r; r++) {
+        const name = ws[XLSX.utils.encode_cell({r, c: 1})]?.v || '';
+        const date = ws[XLSX.utils.encode_cell({r, c: 7})]?.v || '';
+        const qty = parseFloat(ws[XLSX.utils.encode_cell({r, c: 8})]?.v) || 0;
+        const amt = parseFloat(ws[XLSX.utils.encode_cell({r, c: 9})]?.v) || 0;
+
+        if (!name || !date) continue;
+
+        const dateStr = String(date);
+        const year = parseInt(dateStr.substring(0, 4));
+        const month = parseInt(dateStr.substring(4, 6));
+        const mapped = codeMap[name.trim()] || name.trim();
+
+        records.push({ name: mapped, origName: name.trim(), year, month, qty, amt });
+    }
+
+    // 월별 품목별 집계
+    const summary = {};
+    records.forEach(rec => {
+        const key = `${rec.year}-${rec.month}`;
+        if (!summary[key]) summary[key] = {};
+        if (!summary[key][rec.name]) summary[key][rec.name] = { qty: 0, amt: 0 };
+        summary[key][rec.name].qty += rec.qty;
+        summary[key][rec.name].amt += rec.amt;
+    });
+
+    return { factory: 'ipgo_list', months: summary, records };
+}
+
+// ============================================================
+// 파싱 미리보기
+// ============================================================
+let pendingParsed = null;
+let pendingFileType = null;
+
+function showParsePreview(parsed, fileType, fileName) {
+    pendingParsed = parsed;
+    pendingFileType = fileType;
+
+    const container = document.getElementById('parsePreview');
+    const months = parsed.months || {};
+    const monthKeys = Object.keys(months).sort();
+
+    if (monthKeys.length === 0) {
+        container.innerHTML = '<p style="color:var(--red-brown);">파싱된 데이터가 없습니다. 시트명을 확인해주세요.</p>';
+        return;
+    }
+
+    let html = `<div class="preview-section">
+        <div class="preview-header">
+            <span>${fileName} — ${monthKeys.length}개월 파싱 완료</span>
+            <button class="btn btn-gold" onclick="applyParsedData()" style="padding:4px 16px; font-size:12px;">수불부에 반영</button>
+        </div>`;
+
+    // 최근 3개월만 미리보기
+    const showMonths = monthKeys.slice(-3);
+
+    showMonths.forEach(key => {
+        const md = months[key];
+        const items = fileType === 'ipgo_list' ? md : md.items;
+        const ymLabel = fileType === 'ipgo_list' ? key : `${md.year}년 ${md.month}월`;
+
+        html += `<div style="padding:8px 12px; font-weight:700; color:var(--dark-navy); border-bottom:1px solid var(--border);">${ymLabel}</div>`;
+        html += `<table class="preview-table"><thead><tr>
+            <th>품목명</th><th>구분</th>`;
+
+        if (fileType === 'ipgo_list') {
+            html += `<th>입고수량</th><th>입고금액</th><th>평균단가</th>`;
+        } else {
+            html += `<th>기초</th><th>입고</th><th>출고</th><th>기말</th>`;
+        }
+        html += `</tr></thead><tbody>`;
+
+        if (fileType === 'ipgo_list') {
+            Object.entries(items).forEach(([name, val]) => {
+                const avgPrice = val.qty > 0 ? Math.round(val.amt / val.qty) : 0;
+                html += `<tr><td>${name}</td><td>입고</td>
+                    <td>${fmt(val.qty)}</td><td>${fmtAmt(val.amt)}</td><td>${fmtAmt(avgPrice)}</td></tr>`;
+            });
+        } else {
+            Object.entries(items).forEach(([name, val]) => {
+                // 수불부 품목 분류
+                const isMeat = MEAT_ITEMS.some(i => i.name === name);
+                const isProc = PROC_ITEMS.some(i => i.name === name);
+                const isSauce = SAUCE_ITEMS.raw.some(i => i.name === name) || SAUCE_ITEMS.product.some(i => i.name === name);
+                const cat = isSauce ? '소스' : isMeat ? '원육' : isProc ? '가공육' : '?';
+
+                html += `<tr><td>${name}</td><td>${cat}</td>
+                    <td>${fmt(val.gicho || 0)}</td>
+                    <td class="cell-ipgo">${fmt(val.ipgo || 0)}</td>
+                    <td class="cell-chulgo">${fmt(val.chulgo || 0)}</td>
+                    <td>${fmt(val.gimal || 0)}</td></tr>`;
+            });
+        }
+
+        html += '</tbody></table>';
+    });
+
+    if (monthKeys.length > 3) {
+        html += `<div style="padding:8px 12px; color:#999; font-size:11px;">외 ${monthKeys.length - 3}개월 생략</div>`;
+    }
+
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+// 파싱 데이터 → 수불부 반영
+function applyParsedData() {
+    if (!pendingParsed || !pendingFileType) return;
+
+    const parsed = pendingParsed;
+    const ft = pendingFileType;
+    const months = parsed.months || {};
+    let appliedCount = 0;
+
+    Object.entries(months).forEach(([key, md]) => {
+        const year = ft === 'ipgo_list' ? parseInt(key.split('-')[0]) : md.year;
+        const month = ft === 'ipgo_list' ? parseInt(key.split('-')[1]) : md.month;
+        const items = ft === 'ipgo_list' ? md : md.items;
+
+        if (ft === 'ipgo_list') {
+            // 입고현황: 원육 입고 단가 반영 (전체 공장 합계 기준 — 추후 공장별 분리 필요 시 확장)
+            Object.entries(items).forEach(([name, val]) => {
+                const avgPrice = val.qty > 0 ? val.amt / val.qty : 0;
+                // 원육에 해당하는 품목이면 각 공장에 단가 정보 참고용으로 저장
+                MEAT_FACTORIES.forEach(fac => {
+                    const d = getItemData('meat', fac, name, year, month);
+                    if (d.ipgoQty > 0 && d.ipgoPrice === 0) {
+                        d.ipgoPrice = avgPrice;
+                        d.ipgoAmt = d.ipgoQty * avgPrice;
+                        calcWeightedAvg(d);
+                        appliedCount++;
+                    }
+                });
+            });
+        } else {
+            // 작업일지: 입고/출고 수량 반영
+            const factoryKey = (ft === 'jsy') ? 'incheon' : parsed.factory;
+
+            Object.entries(items).forEach(([name, val]) => {
+                const isMeat = MEAT_ITEMS.some(i => i.name === name);
+                const isProc = PROC_ITEMS.some(i => i.name === name);
+                const isSauce = SAUCE_ITEMS.raw.some(i => i.name === name) || SAUCE_ITEMS.product.some(i => i.name === name);
+
+                if (isMeat) {
+                    const d = getItemData('meat', factoryKey, name, year, month);
+                    linkGicho('meat', factoryKey, name, year, month);
+                    if (val.ipgo !== undefined) d.ipgoQty = val.ipgo;
+                    if (val.chulgo !== undefined) d.chulgoQty = val.chulgo;
+                    calcWeightedAvg(d);
+                    appliedCount++;
+                }
+                if (isProc) {
+                    const d = getItemData('processed', factoryKey, name, year, month);
+                    linkGicho('processed', factoryKey, name, year, month);
+                    if (val.ipgo !== undefined) d.ipgoQty = val.ipgo;
+                    if (val.chulgo !== undefined) d.chulgoQty = val.chulgo;
+                    calcWeightedAvg(d);
+                    appliedCount++;
+                }
+                if (isSauce && (ft === 'jsy' || ft === 'sauce_incheon')) {
+                    // 소스는 원재료(raw) or 제품(incheon/chamfresh/youngmeat)
+                    const isRaw = SAUCE_ITEMS.raw.some(i => i.name === name);
+                    const secKey = isRaw ? 'raw' : factoryKey;
+                    const d = getItemData('sauce', secKey, name, year, month);
+                    linkGicho('sauce', secKey, name, year, month);
+                    if (val.ipgo !== undefined) d.ipgoQty = val.ipgo;
+                    if (val.chulgo !== undefined) d.chulgoQty = val.chulgo;
+                    calcWeightedAvg(d);
+                    appliedCount++;
+                }
+            });
+        }
+    });
+
+    alert(`${appliedCount}건 반영 완료`);
+    renderCurrentTab();
+    document.getElementById('parsePreview').innerHTML = '';
+    pendingParsed = null;
+    pendingFileType = null;
 }
 
 // ============================================================
