@@ -7,20 +7,22 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <style>
         :root {
-            --main-blue: #00338D;
-            --gold: #C5A44E;
+            --dark-navy: #122437;
+            --green: #006E32;
+            --red-brown: #CB4427;
+            --gold: #E2BC54;
+            --blue: #143C73;
             --light-bg: #f5f7fa;
             --border: #d0d5dd;
             --white: #ffffff;
-            --light-blue: #e8edf5;
-            --red: #d32f2f;
+            --light-blue: #edf1f7;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Malgun Gothic', '맑은 고딕', sans-serif; background: var(--light-bg); color: #333; font-size: 13px; }
 
         /* Header */
         .header {
-            background: var(--main-blue);
+            background: var(--dark-navy);
             color: var(--white);
             padding: 16px 24px;
             display: flex;
@@ -33,7 +35,7 @@
         /* Tabs */
         .tab-container {
             background: var(--white);
-            border-bottom: 2px solid var(--main-blue);
+            border-bottom: 2px solid var(--dark-navy);
             display: flex;
             padding: 0 24px;
         }
@@ -46,9 +48,9 @@
             transition: all 0.2s;
             font-size: 14px;
         }
-        .tab:hover { color: var(--main-blue); }
+        .tab:hover { color: var(--dark-navy); }
         .tab.active {
-            color: var(--main-blue);
+            color: var(--dark-navy);
             border-bottom-color: var(--gold);
             background: var(--light-blue);
         }
@@ -63,7 +65,7 @@
             border-bottom: 1px solid var(--border);
             flex-wrap: wrap;
         }
-        .controls label { font-weight: 600; color: var(--main-blue); }
+        .controls label { font-weight: 600; color: var(--dark-navy); }
         .controls select, .controls input {
             padding: 6px 12px;
             border: 1px solid var(--border);
@@ -79,11 +81,11 @@
             font-size: 13px;
             transition: all 0.2s;
         }
-        .btn-primary { background: var(--main-blue); color: var(--white); }
-        .btn-primary:hover { background: #002266; }
-        .btn-gold { background: var(--gold); color: var(--white); }
-        .btn-gold:hover { background: #b3933e; }
-        .btn-outline { background: var(--white); color: var(--main-blue); border: 1px solid var(--main-blue); }
+        .btn-primary { background: var(--dark-navy); color: var(--white); }
+        .btn-primary:hover { background: #0a1520; }
+        .btn-gold { background: var(--gold); color: var(--dark-navy); }
+        .btn-gold:hover { background: #d4aa3a; }
+        .btn-outline { background: var(--white); color: var(--dark-navy); border: 1px solid var(--dark-navy); }
         .btn-outline:hover { background: var(--light-blue); }
 
         /* Content */
@@ -100,7 +102,7 @@
             overflow: hidden;
         }
         .section-header {
-            background: var(--main-blue);
+            background: var(--dark-navy);
             color: var(--white);
             padding: 10px 16px;
             font-weight: 700;
@@ -110,7 +112,7 @@
             justify-content: space-between;
         }
         .section-header.sub {
-            background: #4a6fa5;
+            background: var(--blue);
         }
 
         /* Table */
@@ -121,23 +123,24 @@
             font-size: 12px;
         }
         thead th {
-            background: var(--main-blue);
-            color: var(--white);
+            background: var(--white);
+            color: var(--dark-navy);
             padding: 8px 6px;
             text-align: center;
             font-weight: 600;
             white-space: nowrap;
             position: sticky;
             top: 0;
+            border-bottom: 2px solid var(--dark-navy);
         }
         thead th.group-header {
-            background: var(--main-blue);
-            border-bottom: 2px solid var(--gold);
+            border-bottom: 3px solid var(--gold);
+            font-size: 13px;
         }
-        thead th.col-gicheo { background: #1a5276; }
-        thead th.col-ipgo { background: #1e8449; }
-        thead th.col-chulgo { background: #922b21; }
-        thead th.col-gimal { background: #6c3483; }
+        thead th.col-gicheo { color: var(--blue); }
+        thead th.col-ipgo { color: var(--green); }
+        thead th.col-chulgo { color: var(--red-brown); }
+        thead th.col-gimal { color: var(--dark-navy); }
 
         tbody td {
             padding: 6px 8px;
@@ -148,7 +151,7 @@
         tbody td.item-name {
             text-align: left;
             font-weight: 600;
-            color: var(--main-blue);
+            color: var(--dark-navy);
             position: sticky;
             left: 0;
             background: var(--white);
@@ -161,10 +164,10 @@
         }
         tbody tr:hover { background: #f8f9ff; }
         tbody tr.total-row {
-            background: #f0f4ff;
+            background: #f8f8f8;
             font-weight: 700;
         }
-        tbody tr.total-row td { border-top: 2px solid var(--main-blue); }
+        tbody tr.total-row td { border-top: 2px solid var(--dark-navy); }
 
         /* Input cells */
         .cell-input {
@@ -181,11 +184,12 @@
             border-color: var(--gold);
             box-shadow: 0 0 0 2px rgba(197,164,78,0.2);
         }
-        .cell-calc {
-            color: var(--main-blue);
-            font-weight: 600;
-        }
-        .cell-negative { color: var(--red); }
+        .cell-calc { font-weight: 600; }
+        .cell-gicheo { color: var(--blue); }
+        .cell-ipgo { color: var(--green); }
+        .cell-chulgo { color: var(--red-brown); }
+        .cell-gimal { color: var(--dark-navy); }
+        .cell-negative { color: var(--red-brown); font-weight: 700; }
 
         /* Footer */
         .footer {
@@ -451,21 +455,21 @@ function buildSauceTable(section, year, month) {
         html += `<tr>
             <td class="item-name">${item.name}</td>
             <td class="item-unit">${item.unit}</td>
-            <td class="cell-calc">${fmt(d.gichoQty)}</td>
-            <td class="cell-calc">${fmt(d.gichoPrice)}</td>
-            <td class="cell-calc">${fmtAmt(d.gichoAmt)}</td>
+            <td class="cell-calc cell-gicheo">${fmt(d.gichoQty)}</td>
+            <td class="cell-calc cell-gicheo">${fmt(d.gichoPrice)}</td>
+            <td class="cell-calc cell-gicheo">${fmtAmt(d.gichoAmt)}</td>
             <td><input class="cell-input" type="text" value="${d.ipgoQty || ''}"
                 onchange="onInputChange('sauce','${section.key}','${item.name}','ipgoQty',this.value)"></td>
             <td><input class="cell-input" type="text" value="${d.ipgoPrice || ''}"
                 onchange="onInputChange('sauce','${section.key}','${item.name}','ipgoPrice',this.value)"></td>
-            <td class="cell-calc">${fmtAmt(d.ipgoAmt)}</td>
+            <td class="cell-calc cell-ipgo">${fmtAmt(d.ipgoAmt)}</td>
             <td><input class="cell-input" type="text" value="${d.chulgoQty || ''}"
                 onchange="onInputChange('sauce','${section.key}','${item.name}','chulgoQty',this.value)"></td>
-            <td class="cell-calc">${fmt(d.chulgoPrice)}</td>
-            <td class="cell-calc">${fmtAmt(d.chulgoAmt)}</td>
-            <td class="cell-calc ${d.gimalQty < 0 ? 'cell-negative' : ''}">${fmt(d.gimalQty)}</td>
-            <td class="cell-calc">${fmt(d.gimalPrice)}</td>
-            <td class="cell-calc">${fmtAmt(d.gimalAmt)}</td>
+            <td class="cell-calc cell-chulgo">${fmt(d.chulgoPrice)}</td>
+            <td class="cell-calc cell-chulgo">${fmtAmt(d.chulgoAmt)}</td>
+            <td class="cell-calc cell-gimal ${d.gimalQty < 0 ? 'cell-negative' : ''}">${fmt(d.gimalQty)}</td>
+            <td class="cell-calc cell-gimal">${fmt(d.gimalPrice)}</td>
+            <td class="cell-calc cell-gimal">${fmtAmt(d.gimalAmt)}</td>
         </tr>`;
     });
 
