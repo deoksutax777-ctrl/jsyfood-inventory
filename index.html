@@ -1065,7 +1065,9 @@ function finalizeSheet(wb, ws, sheetName, nameColWidth) {
     // 행 높이 (기본 18)
     if (!ws['!rows']) ws['!rows'] = [];
     // 눈금선 숨기기
-    ws['!sheetViews'] = [{ showGridLines: false }];
+    // 눈금선 숨기기
+    if (!ws['!views']) ws['!views'] = [];
+    ws['!views'][0] = { showGridLines: false };
 
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
 }
