@@ -1672,7 +1672,6 @@ function showAllPreviews() {
         const showKey = lastMonth[0];
         if (showKey) {
             const md = months[showKey];
-            const items = fileType === 'ipgo_list' ? md : md.items;
 
             html += `<table class="preview-table"><thead><tr>
                 <th>품목명</th><th>구분</th>`;
@@ -1684,15 +1683,15 @@ function showAllPreviews() {
             html += `</tr></thead><tbody>`;
 
             if (fileType === 'ipgo_list') {
-                Object.entries(items).forEach(([name, val]) => {
+                Object.entries(md).forEach(([name, val]) => {
                     const avgPrice = val.qty > 0 ? Math.round(val.amt / val.qty) : 0;
                     html += `<tr><td>${name}</td><td>입고</td>
                         <td>${fmt(val.qty)}</td><td>${fmtAmt(val.amt)}</td><td>${fmtAmt(avgPrice)}</td></tr>`;
                 });
             } else {
                 // 섹션별로 표시
-                const meatItems = items.meat || items.items || {};
-                const procItems = items.proc || {};
+                const meatItems = md.meat || {};
+                const procItems = md.proc || {};
                 function renderItems(obj, cat) {
                     Object.entries(obj).forEach(([name, val]) => {
                         html += `<tr><td>${name}</td><td>${cat}</td>
@@ -1739,10 +1738,8 @@ function applyAllParsedData() {
         Object.entries(months).forEach(([key, md]) => {
             const year = fileType === 'ipgo_list' ? parseInt(key.split('-')[0]) : md.year;
             const month = fileType === 'ipgo_list' ? parseInt(key.split('-')[1]) : md.month;
-            const items = fileType === 'ipgo_list' ? md : md.items;
-
             if (fileType === 'ipgo_list') {
-                Object.entries(items).forEach(([name, val]) => {
+                Object.entries(md).forEach(([name, val]) => {
                     const avgPrice = val.qty > 0 ? val.amt / val.qty : 0;
                     MEAT_FACTORIES.forEach(fac => {
                         const d = getItemData('meat', fac, name, year, month);
@@ -1756,8 +1753,8 @@ function applyAllParsedData() {
                 });
             } else {
                 const factoryKey = (fileType === 'jsy') ? 'incheon' : parsed.factory;
-                const meatItems = items.meat || {};
-                const procItems = items.proc || {};
+                const meatItems = md.meat || {};
+                const procItems = md.proc || {};
 
                 // 원육 섹션 → meat 카테고리
                 Object.entries(meatItems).forEach(([name, val]) => {
