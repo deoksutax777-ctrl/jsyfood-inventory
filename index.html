@@ -993,65 +993,110 @@ function xlStyles() {
     };
 }
 
-function buildExcelRows(category, sections, year, month, st) {
-    const rows = [];
+// 수식 기반 엑셀 빌더
+// C=기초수량, D=기초단가, E=기초금액(=C*D)
+// F=입고수량, G=입고단가, H=입고금액(=F*G)
+// I=출고수량, J=출고단가(=총평균), K=출고금액(=I*J)
+// L=기말수량(=C+F-I), M=기말단가(=J), N=기말금액(=L*M)
+function buildExcelSheet(category, sections, year, month, st) {
+    const ws = {};
+    let r = 0; // 현재 행 (0-indexed)
+
+    function cell(row, col, val, style) {
+        const ref = XLSX.utils.encode_cell({ r: row, c: col });
+        if (typeof val === 'object' && val.f) {
+            ws[ref] = { t: 'n', f: val.f, s: style };
+        } else if (typeof val === 'number') {
+            ws[ref] = { t: 'n', v: val, s: style };
+        } else {
+            ws[ref] = { t: 's', v: val || '', s: style };
+        }
+    }
+
+    // 타이틀
+    cell(r, 0, `${year}년 ${month}월 ${category === 'sauce' ? '소스' : category === 'meat' ? '원육' : '가공육'} 수불부`, st.title);
+    r += 2;
 
     sections.forEach(sec => {
         // 섹션 헤더
-        rows.push([{ v: sec.label, s: st.secHeader }]);
-        // 컬럼 헤더 1행
-        rows.push([
-            { v: '품목명', s: st.header }, { v: '단위', s: st.header },
-            { v: '기초', s: st.gicheo }, { v: '', s: st.gicheo }, { v: '', s: st.gicheo },
-            { v: '입고', s: st.ipgo }, { v: '', s: st.ipgo }, { v: '', s: st.ipgo },
-            { v: '출고', s: st.chulgo }, { v: '', s: st.chulgo }, { v: '', s: st.chulgo },
-            { v: '기말', s: st.gimal }, { v: '', s: st.gimal }, { v: '', s: st.gimal }
-        ]);
-        // 컬럼 헤더 2행
-        rows.push([
-            { v: '', s: st.header }, { v: '', s: st.header },
-            { v: '수량', s: st.gicheo }, { v: '단가', s: st.gicheo }, { v: '금액', s: st.gicheo },
-            { v: '수량', s: st.ipgo }, { v: '단가', s: st.ipgo }, { v: '금액', s: st.ipgo },
-            { v: '수량', s: st.chulgo }, { v: '단가', s: st.chulgo }, { v: '금액', s: st.chulgo },
-            { v: '수량', s: st.gimal }, { v: '단가', s: st.gimal }, { v: '금액', s: st.gimal }
-        ]);
+        cell(r, 0, sec.label, st.secHeader);
+        for (let c = 1; c <= 13; c++) cell(r, c, '', st.secHeader);
+        r++;
 
-        let tots = { gichoAmt: 0, ipgoAmt: 0, chulgoAmt: 0, gimalAmt: 0 };
+        // 컬럼 헤더 1행
+        cell(r, 0, '품목명', st.header); cell(r, 1, '단위', st.header);
+        cell(r, 2, '기초', st.gicheo); cell(r, 3, '', st.gicheo); cell(r, 4, '', st.gicheo);
+        cell(r, 5, '입고', st.ipgo); cell(r, 6, '', st.ipgo); cell(r, 7, '', st.ipgo);
+        cell(r, 8, '출고', st.chulgo); cell(r, 9, '', st.chulgo); cell(r, 10, '', st.chulgo);
+        cell(r, 11, '기말', st.gimal); cell(r, 12, '', st.gimal); cell(r, 13, '', st.gimal);
+        r++;
+
+        // 컬럼 헤더 2행
+        cell(r, 0, '', st.header); cell(r, 1, '', st.header);
+        ['수량','단가','금액'].forEach((v,i) => cell(r, 2+i, v, st.gicheo));
+        ['수량','단가','금액'].forEach((v,i) => cell(r, 5+i, v, st.ipgo));
+        ['수량','단가','금액'].forEach((v,i) => cell(r, 8+i, v, st.chulgo));
+        ['수량','단가','금액'].forEach((v,i) => cell(r, 11+i, v, st.gimal));
+        r++;
+
+        const dataStartRow = r;
 
         sec.items.forEach(item => {
             const d = getItemData(category, sec.key, item.name, year, month);
-            tots.gichoAmt += d.gichoAmt; tots.ipgoAmt += d.ipgoAmt;
-            tots.chulgoAmt += d.chulgoAmt; tots.gimalAmt += d.gimalAmt;
+            const R = r + 1; // 1-indexed for formulas
 
-            rows.push([
-                { v: item.name, s: st.name }, { v: item.unit, s: st.unit },
-                { v: d.gichoQty, s: { ...st.numDec, font: { ...st.numGicheo.font } } },
-                { v: Math.round(d.gichoPrice), s: st.numGicheo },
-                { v: Math.round(d.gichoAmt), s: st.numGicheo },
-                { v: d.ipgoQty, s: { ...st.numDec, font: { ...st.numIpgo.font } } },
-                { v: Math.round(d.ipgoPrice), s: st.numIpgo },
-                { v: Math.round(d.ipgoAmt), s: st.numIpgo },
-                { v: d.chulgoQty, s: { ...st.numDec, font: { ...st.numChulgo.font } } },
-                { v: Math.round(d.chulgoPrice), s: st.numChulgo },
-                { v: Math.round(d.chulgoAmt), s: st.numChulgo },
-                { v: d.gimalQty, s: { ...st.numDec, font: { ...st.numGimal.font } } },
-                { v: Math.round(d.gimalPrice), s: st.numGimal },
-                { v: Math.round(d.gimalAmt), s: st.numGimal }
-            ]);
+            // A,B: 품목명, 단위
+            cell(r, 0, item.name, st.name);
+            cell(r, 1, item.unit, st.unit);
+
+            // C,D: 기초수량, 기초단가 (값 입력)
+            cell(r, 2, d.gichoQty, { ...st.numDec, font: { ...st.numGicheo.font } });
+            cell(r, 3, d.gichoPrice, st.numGicheo);
+            // E: 기초금액 = C*D
+            cell(r, 4, { f: `C${R}*D${R}` }, st.numGicheo);
+
+            // F,G: 입고수량, 입고단가 (값 입력)
+            cell(r, 5, d.ipgoQty, { ...st.numDec, font: { ...st.numIpgo.font } });
+            cell(r, 6, d.ipgoPrice, st.numIpgo);
+            // H: 입고금액 = F*G
+            cell(r, 7, { f: `F${R}*G${R}` }, st.numIpgo);
+
+            // I: 출고수량 (값 입력)
+            cell(r, 8, d.chulgoQty, { ...st.numDec, font: { ...st.numChulgo.font } });
+            // J: 출고단가 = 총평균법 = (기초금액+입고금액)/(기초수량+입고수량)
+            cell(r, 9, { f: `IF(C${R}+F${R}=0,0,(E${R}+H${R})/(C${R}+F${R}))` }, st.numChulgo);
+            // K: 출고금액 = I*J
+            cell(r, 10, { f: `I${R}*J${R}` }, st.numChulgo);
+
+            // L: 기말수량 = 기초+입고-출고
+            cell(r, 11, { f: `C${R}+F${R}-I${R}` }, { ...st.numDec, font: { ...st.numGimal.font } });
+            // M: 기말단가 = 총평균단가(=출고단가)
+            cell(r, 12, { f: `J${R}` }, st.numGimal);
+            // N: 기말금액 = L*M
+            cell(r, 13, { f: `L${R}*M${R}` }, st.numGimal);
+
+            r++;
         });
 
-        // 합계행
-        rows.push([
-            { v: '합계', s: st.totalName }, { v: '', s: st.total },
-            { v: '', s: st.total }, { v: '', s: st.total }, { v: Math.round(tots.gichoAmt), s: st.total },
-            { v: '', s: st.total }, { v: '', s: st.total }, { v: Math.round(tots.ipgoAmt), s: st.total },
-            { v: '', s: st.total }, { v: '', s: st.total }, { v: Math.round(tots.chulgoAmt), s: st.total },
-            { v: '', s: st.total }, { v: '', s: st.total }, { v: Math.round(tots.gimalAmt), s: st.total }
-        ]);
-        rows.push([]); // 빈 행 (섹션 구분)
+        const dataEndRow = r; // exclusive
+        const totR = r + 1; // 1-indexed
+
+        // 합계행 (SUM 수식)
+        cell(r, 0, '합계', st.totalName);
+        cell(r, 1, '', st.total);
+        cell(r, 2, '', st.total); cell(r, 3, '', st.total);
+        cell(r, 4, { f: `SUM(E${dataStartRow+1}:E${dataEndRow})` }, st.total);
+        cell(r, 5, '', st.total); cell(r, 6, '', st.total);
+        cell(r, 7, { f: `SUM(H${dataStartRow+1}:H${dataEndRow})` }, st.total);
+        cell(r, 8, '', st.total); cell(r, 9, '', st.total);
+        cell(r, 10, { f: `SUM(K${dataStartRow+1}:K${dataEndRow})` }, st.total);
+        cell(r, 11, '', st.total); cell(r, 12, '', st.total);
+        cell(r, 13, { f: `SUM(N${dataStartRow+1}:N${dataEndRow})` }, st.total);
+        r += 2; // 합계 + 빈행
     });
 
-    return rows;
+    ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: r - 1, c: 13 } });
+    return ws;
 }
 
 function finalizeSheet(wb, ws, sheetName, nameColWidth) {
@@ -1102,10 +1147,7 @@ function downloadSauceExcel(year, month) {
     const ym = `${year % 100}${String(month).padStart(2, '0')}`;
     const st = xlStyles();
 
-    const rows = [[{ v: `${year}년 ${month}월 소스 수불부`, s: st.title }], []];
-    rows.push(...buildExcelRows('sauce', SAUCE_SECTIONS, year, month, st));
-
-    const ws = XLSX.utils.aoa_to_sheet(rows);
+    const ws = buildExcelSheet('sauce', SAUCE_SECTIONS, year, month, st);
     finalizeSheet(wb, ws, ym, 16);
     writeFileNoGrid(wb, `재고수불부_소스_${ym}.xlsx`);
 }
@@ -1117,10 +1159,7 @@ function downloadMeatExcel(year, month) {
 
     calcMeatTotals(year, month);
 
-    const rows = [[{ v: `${year}년 ${month}월 원육 수불부`, s: st.title }], []];
-    rows.push(...buildExcelRows('meat', MEAT_SECTIONS, year, month, st));
-
-    const ws = XLSX.utils.aoa_to_sheet(rows);
+    const ws = buildExcelSheet('meat', MEAT_SECTIONS, year, month, st);
     finalizeSheet(wb, ws, ym, 12);
     writeFileNoGrid(wb, `재고수불부_원육_${ym}.xlsx`);
 }
@@ -1132,10 +1171,7 @@ function downloadProcessedExcel(year, month) {
 
     calcProcTotals(year, month);
 
-    const rows = [[{ v: `${year}년 ${month}월 가공육 수불부`, s: st.title }], []];
-    rows.push(...buildExcelRows('processed', PROC_SECTIONS, year, month, st));
-
-    const ws = XLSX.utils.aoa_to_sheet(rows);
+    const ws = buildExcelSheet('processed', PROC_SECTIONS, year, month, st);
     finalizeSheet(wb, ws, ym, 20);
     writeFileNoGrid(wb, `재고수불부_가공육_${ym}.xlsx`);
 }
