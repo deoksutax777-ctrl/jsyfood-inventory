@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>JSY Food 재고수불부</title>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <style>
         :root {
             --dark-navy: #122437;
@@ -1065,11 +1066,35 @@ function finalizeSheet(wb, ws, sheetName, nameColWidth) {
     // 행 높이 (기본 18)
     if (!ws['!rows']) ws['!rows'] = [];
     // 눈금선 숨기기
-    // 눈금선 숨기기
-    if (!ws['!views']) ws['!views'] = [];
-    ws['!views'][0] = { showGridLines: false };
-
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
+}
+
+// 눈금선 숨기기: xlsx zip 내부 XML 직접 패치
+function writeFileNoGrid(wb, fileName) {
+    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const zip = new JSZip();
+
+    return zip.loadAsync(wbout).then(z => {
+        const sheetFiles = Object.keys(z.files).filter(f => f.startsWith('xl/worksheets/sheet'));
+        const promises = sheetFiles.map(f =>
+            z.file(f).async('string').then(xml => {
+                // sheetView에 showGridLines="0" 추가
+                const patched = xml.replace(
+                    /<sheetView(?![^>]*showGridLines)/g,
+                    '<sheetView showGridLines="0"'
+                );
+                z.file(f, patched);
+            })
+        );
+        return Promise.all(promises).then(() =>
+            z.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+        );
+    }).then(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = fileName; a.click();
+        URL.revokeObjectURL(url);
+    });
 }
 
 function downloadSauceExcel(year, month) {
@@ -1082,7 +1107,7 @@ function downloadSauceExcel(year, month) {
 
     const ws = XLSX.utils.aoa_to_sheet(rows);
     finalizeSheet(wb, ws, ym, 16);
-    XLSX.writeFile(wb, `재고수불부_소스_${ym}.xlsx`);
+    writeFileNoGrid(wb, `재고수불부_소스_${ym}.xlsx`);
 }
 
 function downloadMeatExcel(year, month) {
@@ -1097,7 +1122,7 @@ function downloadMeatExcel(year, month) {
 
     const ws = XLSX.utils.aoa_to_sheet(rows);
     finalizeSheet(wb, ws, ym, 12);
-    XLSX.writeFile(wb, `재고수불부_원육_${ym}.xlsx`);
+    writeFileNoGrid(wb, `재고수불부_원육_${ym}.xlsx`);
 }
 
 function downloadProcessedExcel(year, month) {
@@ -1112,7 +1137,7 @@ function downloadProcessedExcel(year, month) {
 
     const ws = XLSX.utils.aoa_to_sheet(rows);
     finalizeSheet(wb, ws, ym, 20);
-    XLSX.writeFile(wb, `재고수불부_가공육_${ym}.xlsx`);
+    writeFileNoGrid(wb, `재고수불부_가공육_${ym}.xlsx`);
 }
 
 // ============================================================
