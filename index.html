@@ -2028,7 +2028,9 @@ function parseIpgoList(wb) {
         '(청기와) 막내장(4kg)(팩)': '막내장',
         '(청기와) 양념돼지갈비': '돼지갈비',
         '(청기와) 잡육(팩)': '잡육',
-        'LA갈비양념매입': '양념LA갈비'
+        '(청기와) 서울양념왕갈비(8cm)': '서울왕갈비(8cm,양념)',
+        'LA갈비양념매입': '양념LA갈비',
+        '청기와돼지갈비양념 매입': '돼지갈비양념'
     };
 
     // 단위 환산: 팩→kg (4kg/팩)
@@ -2056,23 +2058,27 @@ function parseIpgoList(wb) {
         const month = parseInt(dateStr.substring(4, 6));
         const mapped = codeMap[name.trim()] || name.trim();
 
-        const category = name.trim().startsWith('(청기와)') || name.trim() === 'LA갈비양념매입' ? 'processed' : 'meat';
+        const trimmed = name.trim();
+        const category = trimmed.startsWith('(청기와)') || trimmed === 'LA갈비양념매입' ? 'processed'
+            : trimmed === '청기와돼지갈비양념 매입' ? 'sauce' : 'meat';
         records.push({ name: mapped, origName: name.trim(), year, month, qty, amt, category });
     }
 
     // 월별 품목별 집계 (카테고리 분리)
     const meatSummary = {};
     const procSummary = {};
+    const sauceSummary = {};
     records.forEach(rec => {
         const key = `${rec.year}-${rec.month}`;
-        const target = rec.category === 'processed' ? procSummary : meatSummary;
+        const target = rec.category === 'processed' ? procSummary
+            : rec.category === 'sauce' ? sauceSummary : meatSummary;
         if (!target[key]) target[key] = {};
         if (!target[key][rec.name]) target[key][rec.name] = { qty: 0, amt: 0 };
         target[key][rec.name].qty += rec.qty;
         target[key][rec.name].amt += rec.amt;
     });
 
-    return { factory: 'ipgo_list', months: meatSummary, procMonths: procSummary, records };
+    return { factory: 'ipgo_list', months: meatSummary, procMonths: procSummary, sauceMonths: sauceSummary, records };
 }
 
 // ============================================================
@@ -2185,6 +2191,28 @@ function applyAllParsedData() {
                     setSourceData('processed', 'ipgo_list', name, year, month, 'ipgoAmt', val.amt);
                     PROC_FACTORIES.forEach(fac => {
                         const d = getItemData('processed', fac, name, year, month);
+                        if (d.ipgoQty > 0 && d.ipgoPrice === 0) {
+                            d.ipgoPrice = avgPrice;
+                            d.ipgoAmt = d.ipgoQty * avgPrice;
+                            calcWeightedAvg(d);
+                            totalApplied++;
+                        }
+                    });
+                });
+            });
+        }
+        // 입고현황: 소스 제품 별도 처리
+        if (fileType === 'ipgo_list' && parsed.sauceMonths) {
+            Object.entries(parsed.sauceMonths).forEach(([key, md]) => {
+                const year = parseInt(key.split('-')[0]);
+                const month = parseInt(key.split('-')[1]);
+                Object.entries(md).forEach(([name, val]) => {
+                    const avgPrice = val.qty > 0 ? val.amt / val.qty : 0;
+                    setSourceData('sauce', 'ipgo_list', name, year, month, 'ipgoQty', val.qty);
+                    setSourceData('sauce', 'ipgo_list', name, year, month, 'ipgoAmt', val.amt);
+                    // 소스 제품은 인천/참프레시/영미트 공장에 적용
+                    ['incheon', 'chamfresh', 'youngmeat'].forEach(fac => {
+                        const d = getItemData('sauce', fac, name, year, month);
                         if (d.ipgoQty > 0 && d.ipgoPrice === 0) {
                             d.ipgoPrice = avgPrice;
                             d.ipgoAmt = d.ipgoQty * avgPrice;
