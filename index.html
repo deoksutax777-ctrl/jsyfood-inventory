@@ -1065,7 +1065,7 @@ function renderVerification() {
     // 원육 검증
     html += buildVerifyTable('원육', 'meat', MEAT_FACTORIES, facLabels, MEAT_ITEMS, true);
     // 가공육 검증
-    html += buildVerifyTable('가공육', 'processed', PROC_FACTORIES, facLabels, PROC_ITEMS, false);
+    html += buildVerifyTable('가공육', 'processed', PROC_FACTORIES, facLabels, PROC_ITEMS, true);
     // 소스 검증
     const sauceFacLabels = { raw: '원재료' };
     const sauceSections = [{ key: 'raw', items: SAUCE_ITEMS.raw }];
@@ -1554,7 +1554,7 @@ function downloadMeatExcel(year, month) {
 function downloadProcessedExcel(year, month) {
     const wb = buildMultiSheetWb('processed', PROC_SECTIONS, year, month, 20, calcProcTotals);
     const facLabels = { incheon: '인천공장', chamfresh: '참프레시', youngmeat: '영미트' };
-    const vs = buildVerificationSheet('processed', PROC_SECTIONS, PROC_FACTORIES, facLabels, PROC_ITEMS, year, month, false);
+    const vs = buildVerificationSheet('processed', PROC_SECTIONS, PROC_FACTORIES, facLabels, PROC_ITEMS, year, month, true);
     XLSX.utils.book_append_sheet(wb, vs, '검증');
     const ym = `${year % 100}${String(month).padStart(2, '0')}`;
     writeFileNoGrid(wb, `재고수불부_가공육_${ym}.xlsx`);
@@ -2016,17 +2016,27 @@ function parseIpgoList(wb) {
 
     // 품목코드 → 수불부 품목 매핑
     const codeMap = {
-        '수입갈비': '갈비', '살치': '살치살', '갈비본살': '진갈비살',
+        '수입갈비': '갈비', '살치': '살치살', '갈비본살': '갈비',
         '안창살 원육': '안창살', '돈목살': '돈목살', '돈뼈': '돼지뼈',
         '냉동빽립': '갈비', '냉동볼살(잡육)': '잡육',
         '양념막내장 (국내산)': '막내장',
-        '양념깐양 (호주산)': '깐양'
+        '양념깐양 (호주산)': '깐양',
+        // 가공육 (청기와 완제품 입고)
+        '(청기와) (15cm)생갈비': '생갈비(15cm)',
+        '(청기와) (15cm)수원왕갈비': '수원왕갈비(15cm)',
+        '(청기와) 깐양(4kg)(팩)': '깐양',
+        '(청기와) 막내장(4kg)(팩)': '막내장',
+        '(청기와) 양념돼지갈비': '돼지갈비',
+        '(청기와) 잡육(팩)': '잡육',
+        'LA갈비양념매입': '양념LA갈비'
     };
 
     // 단위 환산: 팩→kg (4kg/팩)
     const unitConvert = {
         '양념막내장 (국내산)': 4, // 팩(4kg) → kg
-        '양념깐양 (호주산)': 4
+        '양념깐양 (호주산)': 4,
+        '(청기와) 깐양(4kg)(팩)': 4,
+        '(청기와) 막내장(4kg)(팩)': 4
     };
 
     for (let r = range.s.r + 1; r <= range.e.r; r++) {
@@ -2046,20 +2056,23 @@ function parseIpgoList(wb) {
         const month = parseInt(dateStr.substring(4, 6));
         const mapped = codeMap[name.trim()] || name.trim();
 
-        records.push({ name: mapped, origName: name.trim(), year, month, qty, amt });
+        const category = name.trim().startsWith('(청기와)') || name.trim() === 'LA갈비양념매입' ? 'processed' : 'meat';
+        records.push({ name: mapped, origName: name.trim(), year, month, qty, amt, category });
     }
 
-    // 월별 품목별 집계
-    const summary = {};
+    // 월별 품목별 집계 (카테고리 분리)
+    const meatSummary = {};
+    const procSummary = {};
     records.forEach(rec => {
         const key = `${rec.year}-${rec.month}`;
-        if (!summary[key]) summary[key] = {};
-        if (!summary[key][rec.name]) summary[key][rec.name] = { qty: 0, amt: 0 };
-        summary[key][rec.name].qty += rec.qty;
-        summary[key][rec.name].amt += rec.amt;
+        const target = rec.category === 'processed' ? procSummary : meatSummary;
+        if (!target[key]) target[key] = {};
+        if (!target[key][rec.name]) target[key][rec.name] = { qty: 0, amt: 0 };
+        target[key][rec.name].qty += rec.qty;
+        target[key][rec.name].amt += rec.amt;
     });
 
-    return { factory: 'ipgo_list', months: summary, records };
+    return { factory: 'ipgo_list', months: meatSummary, procMonths: procSummary, records };
 }
 
 // ============================================================
@@ -2161,13 +2174,34 @@ function applyAllParsedData() {
     [...workLogs, ...ipgoList].forEach(({ parsed, fileType }) => {
         const months = parsed.months || {};
 
+        // 입고현황: 가공육 별도 처리
+        if (fileType === 'ipgo_list' && parsed.procMonths) {
+            Object.entries(parsed.procMonths).forEach(([key, md]) => {
+                const year = parseInt(key.split('-')[0]);
+                const month = parseInt(key.split('-')[1]);
+                Object.entries(md).forEach(([name, val]) => {
+                    const avgPrice = val.qty > 0 ? val.amt / val.qty : 0;
+                    setSourceData('processed', 'ipgo_list', name, year, month, 'ipgoQty', val.qty);
+                    setSourceData('processed', 'ipgo_list', name, year, month, 'ipgoAmt', val.amt);
+                    PROC_FACTORIES.forEach(fac => {
+                        const d = getItemData('processed', fac, name, year, month);
+                        if (d.ipgoQty > 0 && d.ipgoPrice === 0) {
+                            d.ipgoPrice = avgPrice;
+                            d.ipgoAmt = d.ipgoQty * avgPrice;
+                            calcWeightedAvg(d);
+                            totalApplied++;
+                        }
+                    });
+                });
+            });
+        }
+
         Object.entries(months).forEach(([key, md]) => {
             const year = fileType === 'ipgo_list' ? parseInt(key.split('-')[0]) : md.year;
             const month = fileType === 'ipgo_list' ? parseInt(key.split('-')[1]) : md.month;
             if (fileType === 'ipgo_list') {
                 Object.entries(md).forEach(([name, val]) => {
                     const avgPrice = val.qty > 0 ? val.amt / val.qty : 0;
-                    // 원본 데이터 저장 (검증용)
                     setSourceData('meat', 'ipgo_list', name, year, month, 'ipgoQty', val.qty);
                     setSourceData('meat', 'ipgo_list', name, year, month, 'ipgoAmt', val.amt);
                     MEAT_FACTORIES.forEach(fac => {
