@@ -261,6 +261,30 @@
         .preview-table td:nth-child(2) { text-align: center; }
         .preview-mismatch { background: #fff3f3; color: var(--red-brown); font-weight: 700; }
         .preview-ok { color: var(--green); }
+
+        /* 검증 패널 */
+        .verify-panel { display:none; background:#fff; border-bottom:1px solid var(--border); padding:16px 24px; }
+        .verify-panel.active { display:block; }
+        .verify-section { margin-bottom:16px; }
+        .verify-section h3 {
+            font-size:13px; font-weight:700; color:var(--dark-navy);
+            padding:8px 12px; background:var(--light-blue); border-radius:4px; margin-bottom:8px;
+        }
+        .verify-table { width:100%; border-collapse:collapse; font-size:12px; }
+        .verify-table th {
+            background:var(--dark-navy); color:#fff; padding:6px 8px;
+            text-align:center; font-weight:600; font-size:11px;
+        }
+        .verify-table td { padding:5px 8px; border-bottom:1px solid #eee; text-align:right; }
+        .verify-table td:first-child { text-align:left; font-weight:600; color:var(--dark-navy); }
+        .verify-true { color:var(--green); font-weight:700; text-align:center !important; }
+        .verify-false { color:var(--red-brown); font-weight:700; text-align:center !important; background:#fff3f3; }
+        .verify-na { color:#aaa; text-align:center !important; font-size:11px; }
+        .verify-summary {
+            display:inline-block; padding:4px 12px; border-radius:4px; font-weight:700; font-size:13px; margin-left:12px;
+        }
+        .verify-summary.pass { background:#e6f4ea; color:var(--green); }
+        .verify-summary.fail { background:#fff3f3; color:var(--red-brown); }
     </style>
 </head>
 <body>
@@ -296,6 +320,7 @@
     <button class="btn btn-outline" onclick="toggleUploadPanel()">작업일지 업로드</button>
     <button class="btn btn-outline" onclick="saveData()">저장</button>
     <button class="btn btn-outline" onclick="loadSavedData()">불러오기</button>
+    <button class="btn btn-outline" onclick="toggleVerifyPanel()" style="border-color:var(--green);color:var(--green);">검증</button>
 </div>
 
 <!-- 업로드 패널 -->
@@ -307,6 +332,9 @@
     </div>
     <div id="parsePreview" style="margin-top:16px;"></div>
 </div>
+
+<!-- 검증 패널 -->
+<div id="verifyPanel" class="verify-panel"></div>
 
 <!-- 소스 탭 -->
 <div class="content">
@@ -410,6 +438,24 @@ const PROC_SECTIONS = [
 // 데이터 저장소
 // ============================================================
 let DATA = {};
+let PARSED_SOURCE = {};
+// PARSED_SOURCE[category][factory][yearMonth][itemName] = { ipgoQty, chulgoQty, ipgoAmt }
+
+function setSourceData(category, factory, itemName, year, month, field, value) {
+    const key = getDataKey(year, month);
+    if (!PARSED_SOURCE[category]) PARSED_SOURCE[category] = {};
+    if (!PARSED_SOURCE[category][factory]) PARSED_SOURCE[category][factory] = {};
+    if (!PARSED_SOURCE[category][factory][key]) PARSED_SOURCE[category][factory][key] = {};
+    if (!PARSED_SOURCE[category][factory][key][itemName]) {
+        PARSED_SOURCE[category][factory][key][itemName] = { ipgoQty: 0, chulgoQty: 0, ipgoAmt: 0 };
+    }
+    PARSED_SOURCE[category][factory][key][itemName][field] = value;
+}
+
+function getSourceData(category, factory, itemName, year, month) {
+    const key = getDataKey(year, month);
+    return PARSED_SOURCE?.[category]?.[factory]?.[key]?.[itemName] || null;
+}
 
 function getDataKey(year, month) {
     return `${year}${String(month).padStart(2, '0')}`;
@@ -906,6 +952,139 @@ function renderCurrentTab() {
 }
 
 // ============================================================
+// 검증 패널
+// ============================================================
+function toggleVerifyPanel() {
+    const panel = document.getElementById('verifyPanel');
+    const isActive = panel.classList.contains('active');
+    if (isActive) {
+        panel.classList.remove('active');
+    } else {
+        panel.classList.add('active');
+        renderVerification();
+    }
+}
+
+function renderVerification() {
+    const year = parseInt(document.getElementById('selYear').value);
+    const month = parseInt(document.getElementById('selMonth').value);
+    const panel = document.getElementById('verifyPanel');
+    const ymKey = getDataKey(year, month);
+
+    let allMatch = true;
+    let hasData = false;
+    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <span style="font-weight:700;font-size:15px;color:var(--dark-navy);">${year}년 ${month}월 검증 결과</span>
+        <span id="verifySummary"></span>
+    </div>`;
+
+    // 검증 테이블 빌드 헬퍼
+    function buildVerifyTable(title, category, factories, factoryLabels, items, showIpgoList) {
+        let secHtml = `<div class="verify-section"><h3>${title}</h3>`;
+        secHtml += `<div class="table-wrap"><table class="verify-table"><thead><tr>
+            <th rowspan="2">품목명</th><th rowspan="2">공장</th>
+            <th colspan="3">입고수량</th><th colspan="3">출고수량</th>`;
+        if (showIpgoList) secHtml += `<th colspan="3">입고금액 (입고현황)</th>`;
+        secHtml += `</tr><tr>
+            <th>작업일지</th><th>수불부</th><th>일치</th>
+            <th>작업일지</th><th>수불부</th><th>일치</th>`;
+        if (showIpgoList) secHtml += `<th>입고현황</th><th>수불부</th><th>일치</th>`;
+        secHtml += `</tr></thead><tbody>`;
+
+        let secHasData = false;
+
+        items.forEach(item => {
+            factories.forEach(fac => {
+                const src = getSourceData(category, fac, item.name, year, month);
+                if (!src) return;
+                secHasData = true;
+                hasData = true;
+
+                const d = getItemData(category, fac, item.name, year, month);
+                const ipgoMatch = Math.abs((src.ipgoQty || 0) - d.ipgoQty) < 0.01;
+                const chulgoMatch = Math.abs((src.chulgoQty || 0) - d.chulgoQty) < 0.01;
+                if (!ipgoMatch || !chulgoMatch) allMatch = false;
+
+                secHtml += `<tr>
+                    <td>${item.name}</td>
+                    <td style="text-align:center">${factoryLabels[fac] || fac}</td>
+                    <td>${fmt(src.ipgoQty || 0)}</td>
+                    <td>${fmt(d.ipgoQty)}</td>
+                    <td class="${ipgoMatch ? 'verify-true' : 'verify-false'}">${ipgoMatch ? 'TRUE' : 'FALSE'}</td>
+                    <td>${fmt(src.chulgoQty || 0)}</td>
+                    <td>${fmt(d.chulgoQty)}</td>
+                    <td class="${chulgoMatch ? 'verify-true' : 'verify-false'}">${chulgoMatch ? 'TRUE' : 'FALSE'}</td>`;
+
+                if (showIpgoList) secHtml += `<td class="verify-na">-</td><td class="verify-na">-</td><td class="verify-na">-</td>`;
+                secHtml += `</tr>`;
+            });
+
+            // 입고현황 검증 (품목별 합계 vs 수불부 전체 공장 합계)
+            if (showIpgoList) {
+                const ipgoSrc = getSourceData(category, 'ipgo_list', item.name, year, month);
+                if (ipgoSrc) {
+                    secHasData = true;
+                    hasData = true;
+                    // 수불부 전체 공장 합계
+                    let totalIpgoQty = 0, totalIpgoAmt = 0;
+                    factories.forEach(fac => {
+                        const d = getItemData(category, fac, item.name, year, month);
+                        totalIpgoQty += d.ipgoQty;
+                        totalIpgoAmt += d.ipgoAmt;
+                    });
+                    const qtyMatch = Math.abs(ipgoSrc.ipgoQty - totalIpgoQty) < 0.01;
+                    const amtMatch = Math.abs(ipgoSrc.ipgoAmt - totalIpgoAmt) < 1;
+                    if (!qtyMatch || !amtMatch) allMatch = false;
+
+                    secHtml += `<tr style="background:#f8fbff;">
+                        <td>${item.name}</td>
+                        <td style="text-align:center;color:var(--gold);font-weight:700;">입고현황</td>
+                        <td>${fmt(ipgoSrc.ipgoQty)}</td>
+                        <td>${fmt(totalIpgoQty)}</td>
+                        <td class="${qtyMatch ? 'verify-true' : 'verify-false'}">${qtyMatch ? 'TRUE' : 'FALSE'}</td>
+                        <td class="verify-na">-</td><td class="verify-na">-</td><td class="verify-na">-</td>
+                        <td>${fmtAmt(ipgoSrc.ipgoAmt)}</td>
+                        <td>${fmtAmt(totalIpgoAmt)}</td>
+                        <td class="${amtMatch ? 'verify-true' : 'verify-false'}">${amtMatch ? 'TRUE' : 'FALSE'}</td>
+                    </tr>`;
+                }
+            }
+        });
+
+        if (!secHasData) {
+            secHtml += `<tr><td colspan="${showIpgoList ? 11 : 8}" style="text-align:center;color:#999;padding:16px;">
+                원본 데이터 없음 — 작업일지/입고현황 업로드 후 반영하세요</td></tr>`;
+        }
+
+        secHtml += '</tbody></table></div></div>';
+        return secHtml;
+    }
+
+    const facLabels = { incheon: '인천공장', chamfresh: '참프레시', youngmeat: '영미트' };
+
+    // 원육 검증
+    html += buildVerifyTable('원육', 'meat', MEAT_FACTORIES, facLabels, MEAT_ITEMS, true);
+    // 가공육 검증
+    html += buildVerifyTable('가공육', 'processed', PROC_FACTORIES, facLabels, PROC_ITEMS, false);
+    // 소스 검증
+    const sauceFacLabels = { raw: '원재료' };
+    const sauceSections = [{ key: 'raw', items: SAUCE_ITEMS.raw }];
+    html += buildVerifyTable('소스 (원재료)', 'sauce', ['raw'], sauceFacLabels, SAUCE_ITEMS.raw, false);
+
+    panel.innerHTML = html;
+
+    // 요약 배지
+    const badge = document.getElementById('verifySummary');
+    if (!hasData) {
+        badge.innerHTML = '<span style="color:#999;font-size:12px;">원본 데이터 없음</span>';
+    } else if (allMatch) {
+        badge.innerHTML = '<span class="verify-summary pass">ALL TRUE</span>';
+    } else {
+        badge.innerHTML = '<span class="verify-summary fail">MISMATCH</span>';
+    }
+}
+
+// ============================================================
 // 월 조회
 // ============================================================
 function loadMonth() {
@@ -917,6 +1096,7 @@ function loadMonth() {
 // ============================================================
 function saveData() {
     localStorage.setItem('jsyfood_inventory', JSON.stringify(DATA));
+    localStorage.setItem('jsyfood_parsed_source', JSON.stringify(PARSED_SOURCE));
     alert('저장 완료');
 }
 
@@ -924,6 +1104,8 @@ function loadSavedData() {
     const saved = localStorage.getItem('jsyfood_inventory');
     if (saved) {
         DATA = JSON.parse(saved);
+        const savedSource = localStorage.getItem('jsyfood_parsed_source');
+        if (savedSource) PARSED_SOURCE = JSON.parse(savedSource);
         renderCurrentTab();
         alert('불러오기 완료');
     } else {
@@ -1185,20 +1367,195 @@ function buildMultiSheetWb(category, sections, year, month, nameColWidth, calcFn
     return wb;
 }
 
+// ============================================================
+// 엑셀 검증 시트 빌드
+// ============================================================
+function getExcelRowMap(sections) {
+    // 각 섹션/품목의 엑셀 시트 내 1-indexed 행번호 계산
+    const map = {};
+    let r = 2; // 타이틀(0) + 빈행(1) 이후
+    sections.forEach(sec => {
+        r++; // 섹션 헤더
+        r++; // 컬럼 헤더
+        if (!map[sec.key]) map[sec.key] = {};
+        sec.items.forEach(item => {
+            map[sec.key][item.name] = r + 1; // 1-indexed
+            r++;
+        });
+        r += 2; // 합계행 + 간격
+    });
+    return map;
+}
+
+function buildVerificationSheet(category, sections, factories, factoryLabels, items, year, month, showIpgoList) {
+    const ws = {};
+    const F = XL_FONT;
+    const S = XL_SZ;
+    const thinBorder = { bottom:{style:'thin',color:{rgb:'CCCCCC'}} };
+    const dataBase = { font: { name: F, sz: S }, border: thinBorder };
+    const ymKey = getDataKey(year, month);
+    const sheetName = `${year % 100}${String(month).padStart(2, '0')}`;
+    const rowMap = getExcelRowMap(sections);
+
+    function cell(row, col, val, style) {
+        const ref = XLSX.utils.encode_cell({ r: row, c: col });
+        if (typeof val === 'object' && val !== null && val.f) {
+            ws[ref] = { t: 'n', f: val.f, s: style };
+        } else if (typeof val === 'boolean') {
+            ws[ref] = { t: 'b', v: val, s: style };
+        } else if (typeof val === 'number') {
+            ws[ref] = { t: 'n', v: val, s: style };
+        } else {
+            ws[ref] = { t: 's', v: val != null ? val : '', s: style };
+        }
+    }
+
+    let r = 0;
+    const catName = category === 'sauce' ? '소스' : category === 'meat' ? '원육' : '가공육';
+    cell(r, 0, `${catName} 검증 — ${year}년 ${month}월`, { font: { name: F, sz: 12, bold: true, color: { rgb: '122437' } } });
+    r += 2;
+
+    // 헤더 스타일
+    const hdrStyle = { font: { name: F, sz: S, bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '122437' } }, alignment: { horizontal: 'center', vertical: 'center' }, border: thinBorder };
+    const trueStyle = { font: { name: F, sz: S, bold: true, color: { rgb: '006E32' } }, alignment: { horizontal: 'center' }, border: thinBorder };
+    const numStyle = { ...dataBase, numFmt: FMT_QTY, alignment: { horizontal: 'right' } };
+    const amtStyle = { ...dataBase, numFmt: FMT_AMT, alignment: { horizontal: 'right' } };
+
+    // ── 작업일지 검증 ──
+    cell(r, 0, '작업일지 검증', { font: { name: F, sz: 11, bold: true, color: { rgb: '143C73' } } });
+    r++;
+
+    // 헤더행
+    cell(r, 0, '품목명', hdrStyle);
+    cell(r, 1, '공장', hdrStyle);
+    cell(r, 2, '작업일지 입고', hdrStyle);
+    cell(r, 3, '수불부 입고', hdrStyle);
+    cell(r, 4, '입고 일치', hdrStyle);
+    cell(r, 5, '작업일지 출고', hdrStyle);
+    cell(r, 6, '수불부 출고', hdrStyle);
+    cell(r, 7, '출고 일치', hdrStyle);
+    r++;
+
+    factories.forEach(fac => {
+        const secKey = fac;
+        items.forEach(item => {
+            const src = getSourceData(category, fac, item.name, year, month);
+            const d = getItemData(category, secKey, item.name, year, month);
+            const srcIpgo = src ? (src.ipgoQty || 0) : 0;
+            const srcChulgo = src ? (src.chulgoQty || 0) : 0;
+            const excelRow = rowMap[secKey] ? rowMap[secKey][item.name] : null;
+
+            cell(r, 0, item.name, { ...dataBase, font: { name: F, sz: S, bold: true } });
+            cell(r, 1, factoryLabels[fac] || fac, { ...dataBase, alignment: { horizontal: 'center' } });
+            // 작업일지 원본값 (하드코드)
+            cell(r, 2, srcIpgo, numStyle);
+            // 수불부 입고수량 = 수식 참조
+            if (excelRow) {
+                cell(r, 3, { f: `'${sheetName}'!G${excelRow}` }, numStyle);
+                cell(r, 4, { f: `ROUND(C${r+1},2)=ROUND(D${r+1},2)` }, trueStyle);
+            } else {
+                cell(r, 3, d.ipgoQty, numStyle);
+                cell(r, 4, Math.abs(srcIpgo - d.ipgoQty) < 0.01, trueStyle);
+            }
+
+            cell(r, 5, srcChulgo, numStyle);
+            if (excelRow) {
+                cell(r, 6, { f: `'${sheetName}'!J${excelRow}` }, numStyle);
+                cell(r, 7, { f: `ROUND(F${r+1},2)=ROUND(G${r+1},2)` }, trueStyle);
+            } else {
+                cell(r, 6, d.chulgoQty, numStyle);
+                cell(r, 7, Math.abs(srcChulgo - d.chulgoQty) < 0.01, trueStyle);
+            }
+            r++;
+        });
+    });
+
+    // ── 품목별입고현황 검증 (원육만) ──
+    if (showIpgoList) {
+        r += 2;
+        cell(r, 0, '품목별입고현황 검증', { font: { name: F, sz: 11, bold: true, color: { rgb: '143C73' } } });
+        r++;
+
+        cell(r, 0, '품목명', hdrStyle);
+        cell(r, 1, '입고현황 수량', hdrStyle);
+        cell(r, 2, '수불부 합계 수량', hdrStyle);
+        cell(r, 3, '수량 일치', hdrStyle);
+        cell(r, 4, '입고현황 금액', hdrStyle);
+        cell(r, 5, '수불부 합계 금액', hdrStyle);
+        cell(r, 6, '금액 일치', hdrStyle);
+        r++;
+
+        // 합계 섹션(total)의 행 맵
+        const totalRowMap = rowMap['total'] || {};
+
+        items.forEach(item => {
+            const ipgoSrc = getSourceData(category, 'ipgo_list', item.name, year, month);
+            const srcQty = ipgoSrc ? ipgoSrc.ipgoQty : 0;
+            const srcAmt = ipgoSrc ? ipgoSrc.ipgoAmt : 0;
+
+            // 수불부 전체 공장 합계
+            let totalIpgoQty = 0, totalIpgoAmt = 0;
+            factories.forEach(fac => {
+                const d = getItemData(category, fac, item.name, year, month);
+                totalIpgoQty += d.ipgoQty;
+                totalIpgoAmt += d.ipgoAmt;
+            });
+
+            const totalExcelRow = totalRowMap[item.name];
+
+            cell(r, 0, item.name, { ...dataBase, font: { name: F, sz: S, bold: true } });
+            cell(r, 1, srcQty, numStyle);
+
+            if (totalExcelRow) {
+                cell(r, 2, { f: `'${sheetName}'!G${totalExcelRow}` }, numStyle);
+                cell(r, 3, { f: `ROUND(B${r+1},2)=ROUND(C${r+1},2)` }, trueStyle);
+                cell(r, 4, srcAmt, amtStyle);
+                cell(r, 5, { f: `'${sheetName}'!I${totalExcelRow}` }, amtStyle);
+                cell(r, 6, { f: `ROUND(E${r+1},0)=ROUND(F${r+1},0)` }, trueStyle);
+            } else {
+                cell(r, 2, totalIpgoQty, numStyle);
+                cell(r, 3, Math.abs(srcQty - totalIpgoQty) < 0.01, trueStyle);
+                cell(r, 4, srcAmt, amtStyle);
+                cell(r, 5, totalIpgoAmt, amtStyle);
+                cell(r, 6, Math.abs(srcAmt - totalIpgoAmt) < 1, trueStyle);
+            }
+            r++;
+        });
+    }
+
+    // 시트 범위
+    const maxCol = showIpgoList ? 7 : 7;
+    ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: r - 1, c: maxCol } });
+    ws['!cols'] = [
+        { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 12 }
+    ];
+    return ws;
+}
+
 function downloadSauceExcel(year, month) {
     const wb = buildMultiSheetWb('sauce', SAUCE_SECTIONS, year, month, 16, null);
+    // 검증 시트
+    const facLabels = { raw: '원재료', incheon: '인천공장', chamfresh: '참프레시', youngmeat: '영미트' };
+    const vs = buildVerificationSheet('sauce', SAUCE_SECTIONS, ['raw'], facLabels, SAUCE_ITEMS.raw, year, month, false);
+    XLSX.utils.book_append_sheet(wb, vs, '검증');
     const ym = `${year % 100}${String(month).padStart(2, '0')}`;
     writeFileNoGrid(wb, `재고수불부_소스_${ym}.xlsx`);
 }
 
 function downloadMeatExcel(year, month) {
     const wb = buildMultiSheetWb('meat', MEAT_SECTIONS, year, month, 12, calcMeatTotals);
+    const facLabels = { incheon: '인천공장', chamfresh: '참프레시', youngmeat: '영미트' };
+    const vs = buildVerificationSheet('meat', MEAT_SECTIONS, MEAT_FACTORIES, facLabels, MEAT_ITEMS, year, month, true);
+    XLSX.utils.book_append_sheet(wb, vs, '검증');
     const ym = `${year % 100}${String(month).padStart(2, '0')}`;
     writeFileNoGrid(wb, `재고수불부_원육_${ym}.xlsx`);
 }
 
 function downloadProcessedExcel(year, month) {
     const wb = buildMultiSheetWb('processed', PROC_SECTIONS, year, month, 20, calcProcTotals);
+    const facLabels = { incheon: '인천공장', chamfresh: '참프레시', youngmeat: '영미트' };
+    const vs = buildVerificationSheet('processed', PROC_SECTIONS, PROC_FACTORIES, facLabels, PROC_ITEMS, year, month, false);
+    XLSX.utils.book_append_sheet(wb, vs, '검증');
     const ym = `${year % 100}${String(month).padStart(2, '0')}`;
     writeFileNoGrid(wb, `재고수불부_가공육_${ym}.xlsx`);
 }
@@ -1810,6 +2167,9 @@ function applyAllParsedData() {
             if (fileType === 'ipgo_list') {
                 Object.entries(md).forEach(([name, val]) => {
                     const avgPrice = val.qty > 0 ? val.amt / val.qty : 0;
+                    // 원본 데이터 저장 (검증용)
+                    setSourceData('meat', 'ipgo_list', name, year, month, 'ipgoQty', val.qty);
+                    setSourceData('meat', 'ipgo_list', name, year, month, 'ipgoAmt', val.amt);
                     MEAT_FACTORIES.forEach(fac => {
                         const d = getItemData('meat', fac, name, year, month);
                         if (d.ipgoQty > 0 && d.ipgoPrice === 0) {
@@ -1830,6 +2190,9 @@ function applyAllParsedData() {
                     const isMeat = MEAT_ITEMS.some(i => i.name === name);
                     const isSauce = SAUCE_ITEMS.raw.some(i => i.name === name);
                     if (isMeat) {
+                        // 원본 데이터 저장 (검증용)
+                        if (val.ipgo !== undefined) setSourceData('meat', factoryKey, name, year, month, 'ipgoQty', val.ipgo);
+                        if (val.chulgo !== undefined) setSourceData('meat', factoryKey, name, year, month, 'chulgoQty', val.chulgo);
                         const d = getItemData('meat', factoryKey, name, year, month);
                         linkGicho('meat', factoryKey, name, year, month);
                         if (val.ipgo !== undefined) d.ipgoQty = val.ipgo;
@@ -1838,6 +2201,8 @@ function applyAllParsedData() {
                         totalApplied++;
                     }
                     if (isSauce && (fileType === 'jsy' || fileType === 'sauce_incheon')) {
+                        if (val.ipgo !== undefined) setSourceData('sauce', 'raw', name, year, month, 'ipgoQty', val.ipgo);
+                        if (val.chulgo !== undefined) setSourceData('sauce', 'raw', name, year, month, 'chulgoQty', val.chulgo);
                         const d = getItemData('sauce', 'raw', name, year, month);
                         linkGicho('sauce', 'raw', name, year, month);
                         if (val.ipgo !== undefined) d.ipgoQty = val.ipgo;
@@ -1852,6 +2217,8 @@ function applyAllParsedData() {
                     const isProc = PROC_ITEMS.some(i => i.name === name);
                     const isSauceProd = SAUCE_ITEMS.product.some(i => i.name === name);
                     if (isProc) {
+                        if (val.ipgo !== undefined) setSourceData('processed', factoryKey, name, year, month, 'ipgoQty', val.ipgo);
+                        if (val.chulgo !== undefined) setSourceData('processed', factoryKey, name, year, month, 'chulgoQty', val.chulgo);
                         const d = getItemData('processed', factoryKey, name, year, month);
                         linkGicho('processed', factoryKey, name, year, month);
                         if (val.ipgo !== undefined) d.ipgoQty = val.ipgo;
@@ -1860,6 +2227,8 @@ function applyAllParsedData() {
                         totalApplied++;
                     }
                     if (isSauceProd && (fileType === 'jsy' || fileType === 'sauce_incheon')) {
+                        if (val.ipgo !== undefined) setSourceData('sauce', factoryKey, name, year, month, 'ipgoQty', val.ipgo);
+                        if (val.chulgo !== undefined) setSourceData('sauce', factoryKey, name, year, month, 'chulgoQty', val.chulgo);
                         const d = getItemData('sauce', factoryKey, name, year, month);
                         linkGicho('sauce', factoryKey, name, year, month);
                         if (val.ipgo !== undefined) d.ipgoQty = val.ipgo;
@@ -1889,6 +2258,8 @@ function init() {
     } else {
         initDefaultData();
     }
+    const savedSource = localStorage.getItem('jsyfood_parsed_source');
+    if (savedSource) PARSED_SOURCE = JSON.parse(savedSource);
     renderCurrentTab();
     initDropZone();
 }
