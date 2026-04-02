@@ -441,6 +441,20 @@ let DATA = {};
 let PARSED_SOURCE = {};
 // PARSED_SOURCE[category][factory][yearMonth][itemName] = { ipgoQty, chulgoQty, ipgoAmt }
 
+// 매입 가중평균 단가 저장소
+// MEAT_AVG_PRICES[yearMonth][itemName] = { totalQty, totalAmt, avgPrice }
+let MEAT_AVG_PRICES = {};
+
+function getMeatAvgPrice(itemName, year, month) {
+    const key = getDataKey(year, month);
+    return MEAT_AVG_PRICES?.[key]?.[itemName]?.avgPrice || 0;
+}
+
+function getMeatAvgData(itemName, year, month) {
+    const key = getDataKey(year, month);
+    return MEAT_AVG_PRICES?.[key]?.[itemName] || { totalQty: 0, totalAmt: 0, avgPrice: 0 };
+}
+
 function setSourceData(category, factory, itemName, year, month, field, value) {
     const key = getDataKey(year, month);
     if (!PARSED_SOURCE[category]) PARSED_SOURCE[category] = {};
@@ -668,6 +682,12 @@ function calcMeatTotals(year, month) {
         MEAT_FACTORIES.forEach(fac => {
             linkGicho('meat', fac, item.name, year, month);
             const d = getItemData('meat', fac, item.name, year, month);
+            // 매입 가중평균 단가 자동 적용 (컨테이너 역할)
+            const avgP = getMeatAvgPrice(item.name, year, month);
+            if (avgP > 0) {
+                d.ipgoPrice = avgP;
+                d.ipgoAmt = d.ipgoQty * avgP;
+            }
             calcWeightedAvg(d);
 
             total.gichoQty += d.gichoQty;
@@ -711,7 +731,83 @@ function renderMeat() {
     });
 
     html += '</div>';
+
+    // 매입 가중평균 단가 산출 내역
+    html += buildMeatAvgPricePanel(year, month);
+
     container.innerHTML = html;
+}
+
+function buildMeatAvgPricePanel(year, month) {
+    const ymKey = getDataKey(year, month);
+    const priceData = MEAT_AVG_PRICES[ymKey];
+
+    let html = `<div class="section" style="margin-top:16px;">
+        <div class="section-header">
+            <span>${year}년 ${month}월 매입 가중평균 단가 산출 내역</span>
+            <span style="font-size:11px; font-weight:normal; color:#ccc;">컨테이너 역할 — 모든 거점 동일 단가 적용</span>
+        </div>`;
+
+    if (!priceData || Object.keys(priceData).length === 0) {
+        html += `<div style="padding:20px; text-align:center; color:#999; font-size:13px;">
+            품목별 입고현황 파일을 업로드하면 매입 가중평균 단가가 산출됩니다.
+        </div>`;
+    } else {
+        html += `<div class="table-wrap"><table>
+            <thead>
+                <tr>
+                    <th style="min-width:100px;">품목명</th>
+                    <th>단위</th>
+                    <th style="color:var(--green);">총매입수량</th>
+                    <th style="color:var(--green);">총매입금액</th>
+                    <th style="color:var(--gold); font-weight:700;">가중평균단가</th>
+                    <th>산출식</th>
+                </tr>
+            </thead><tbody>`;
+
+        let totalQtyAll = 0, totalAmtAll = 0;
+
+        MEAT_ITEMS.forEach(item => {
+            const pd = priceData[item.name];
+            if (!pd) {
+                html += `<tr>
+                    <td class="item-name">${item.name}</td>
+                    <td class="item-unit">${item.unit}</td>
+                    <td style="text-align:center; color:#aaa;">—</td>
+                    <td style="text-align:center; color:#aaa;">—</td>
+                    <td style="text-align:center; color:#aaa;">—</td>
+                    <td style="text-align:center; color:#aaa; font-size:11px;">매입 없음</td>
+                </tr>`;
+                return;
+            }
+
+            totalQtyAll += pd.totalQty;
+            totalAmtAll += pd.totalAmt;
+
+            html += `<tr>
+                <td class="item-name">${item.name}</td>
+                <td class="item-unit">${item.unit}</td>
+                <td style="text-align:right; color:var(--green);">${fmt(pd.totalQty)}</td>
+                <td style="text-align:right; color:var(--green);">${fmtAmt(pd.totalAmt)}</td>
+                <td style="text-align:right; color:var(--dark-navy); font-weight:700;">${fmt(pd.avgPrice)}</td>
+                <td style="text-align:left; font-size:11px; color:#888;">
+                    ${fmtAmt(pd.totalAmt)} ÷ ${fmt(pd.totalQty)} = ${fmt(pd.avgPrice)}
+                </td>
+            </tr>`;
+        });
+
+        html += `<tr class="total-row">
+            <td class="item-name">합계</td><td></td>
+            <td style="text-align:right;">${fmt(totalQtyAll)}</td>
+            <td style="text-align:right;">${fmtAmt(totalAmtAll)}</td>
+            <td></td><td></td>
+        </tr>`;
+
+        html += '</tbody></table></div>';
+    }
+
+    html += '</div>';
+    return html;
 }
 
 function buildMeatTable(section, year, month, isTotal) {
@@ -771,8 +867,7 @@ function buildMeatTable(section, year, month, isTotal) {
                 <td class="cell-calc cell-gicheo">${fmtAmt(d.gichoAmt)}</td>
                 <td><input class="cell-input" type="text" value="${d.ipgoQty || ''}"
                     onchange="onInputChange('meat','${section.key}','${item.name}','ipgoQty',this.value)"></td>
-                <td><input class="cell-input" type="text" value="${d.ipgoPrice || ''}"
-                    onchange="onInputChange('meat','${section.key}','${item.name}','ipgoPrice',this.value)"></td>
+                <td class="cell-calc cell-ipgo" title="매입 가중평균 단가 (자동)">${fmt(d.ipgoPrice)}</td>
                 <td class="cell-calc cell-ipgo">${fmtAmt(d.ipgoAmt)}</td>
                 <td><input class="cell-input" type="text" value="${d.chulgoQty || ''}"
                     onchange="onInputChange('meat','${section.key}','${item.name}','chulgoQty',this.value)"></td>
@@ -941,6 +1036,14 @@ function onInputChange(category, section, itemName, field, value) {
     const month = parseInt(document.getElementById('selMonth').value);
     const d = getItemData(category, section, itemName, year, month);
     d[field] = parseFloat(value) || 0;
+    // 원육: ipgoQty 변경 시 매입 가중평균 단가 자동 적용
+    if (category === 'meat' && field === 'ipgoQty') {
+        const avgP = getMeatAvgPrice(itemName, year, month);
+        if (avgP > 0) {
+            d.ipgoPrice = avgP;
+            d.ipgoAmt = d.ipgoQty * avgP;
+        }
+    }
     calcWeightedAvg(d);
     renderCurrentTab();
 }
@@ -1544,11 +1647,125 @@ function downloadSauceExcel(year, month) {
 
 function downloadMeatExcel(year, month) {
     const wb = buildMultiSheetWb('meat', MEAT_SECTIONS, year, month, 12, calcMeatTotals);
+    // 평균단가 시트
+    const avgSheet = buildMeatAvgPriceSheet(year, month);
+    XLSX.utils.book_append_sheet(wb, avgSheet, '평균단가');
+    // 검증 시트
     const facLabels = { incheon: '인천공장', chamfresh: '참프레시', youngmeat: '영미트' };
     const vs = buildVerificationSheet('meat', MEAT_SECTIONS, MEAT_FACTORIES, facLabels, MEAT_ITEMS, year, month, true);
     XLSX.utils.book_append_sheet(wb, vs, '검증');
     const ym = `${year % 100}${String(month).padStart(2, '0')}`;
     writeFileNoGrid(wb, `재고수불부_원육_${ym}.xlsx`);
+}
+
+function buildMeatAvgPriceSheet(year, month) {
+    const ws = {};
+    const F = XL_FONT, S = XL_SZ;
+    const st = xlStyles();
+
+    function cell(r, c, val, style) {
+        const ref = XLSX.utils.encode_cell({ r, c });
+        if (val && typeof val === 'object' && val.f) {
+            ws[ref] = { f: val.f, s: style || {} };
+        } else {
+            ws[ref] = { v: val ?? '', t: typeof val === 'number' ? 'n' : 's', s: style || {} };
+        }
+    }
+
+    const titleStyle = { font: { name: F, bold: true, sz: 14, color: { rgb: '122437' } } };
+    const subtitleStyle = { font: { name: F, sz: 10, color: { rgb: '888888' } } };
+    const hdrStyle = { font: { name: F, bold: true, sz: S, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '122437' } }, alignment: { horizontal: 'center', vertical: 'center' }, border: XL_BORDER };
+    const goldHdr = { font: { name: F, bold: true, sz: S, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: 'E2BC54' } }, alignment: { horizontal: 'center', vertical: 'center' }, border: XL_BORDER };
+    const nameStyle = { font: { name: F, sz: S, bold: true, color: { rgb: '122437' } }, alignment: { horizontal: 'left', vertical: 'center' }, border: XL_BORDER };
+    const unitStyle = { font: { name: F, sz: S, color: { rgb: '666666' } }, alignment: { horizontal: 'center', vertical: 'center' }, border: XL_BORDER };
+    const numStyle = { font: { name: F, sz: S }, alignment: { horizontal: 'right', vertical: 'center' }, numFmt: '#,##0.00', border: XL_BORDER };
+    const amtStyle = { font: { name: F, sz: S }, alignment: { horizontal: 'right', vertical: 'center' }, numFmt: '#,##0', border: XL_BORDER };
+    const avgStyle = { font: { name: F, sz: S, bold: true, color: { rgb: '122437' } }, alignment: { horizontal: 'right', vertical: 'center' }, numFmt: '#,##0.00', border: XL_BORDER, fill: { fgColor: { rgb: 'FFF8E1' } } };
+    const formulaStyle = { font: { name: F, sz: 9, color: { rgb: '888888' } }, alignment: { horizontal: 'left', vertical: 'center' }, border: XL_BORDER };
+
+    let r = 0;
+    cell(r, 0, `${year}년 ${month}월 원육 매입 가중평균 단가 산출 내역`, titleStyle);
+    r++;
+    cell(r, 0, '총매입금액 ÷ 총매입수량 = 가중평균단가 → 모든 거점에 동일 적용', subtitleStyle);
+    r += 2;
+
+    // 헤더
+    cell(r, 0, '품목명', hdrStyle);
+    cell(r, 1, '단위', hdrStyle);
+    cell(r, 2, '총매입수량', hdrStyle);
+    cell(r, 3, '총매입금액', hdrStyle);
+    cell(r, 4, '가중평균단가', goldHdr);
+    cell(r, 5, '산출식', hdrStyle);
+    r++;
+
+    const ymKey = getDataKey(year, month);
+    const priceData = MEAT_AVG_PRICES[ymKey] || {};
+    let totalQtyAll = 0, totalAmtAll = 0;
+
+    MEAT_ITEMS.forEach(item => {
+        const pd = priceData[item.name];
+        cell(r, 0, item.name, nameStyle);
+        cell(r, 1, item.unit, unitStyle);
+
+        if (pd && pd.totalQty > 0) {
+            totalQtyAll += pd.totalQty;
+            totalAmtAll += pd.totalAmt;
+            cell(r, 2, pd.totalQty, numStyle);
+            cell(r, 3, pd.totalAmt, amtStyle);
+            cell(r, 4, { f: `IF(C${r+1}=0,0,D${r+1}/C${r+1})` }, avgStyle);
+            cell(r, 5, `${Math.round(pd.totalAmt).toLocaleString()} ÷ ${pd.totalQty.toLocaleString()} = ${pd.avgPrice.toFixed(2)}`, formulaStyle);
+        } else {
+            cell(r, 2, 0, numStyle);
+            cell(r, 3, 0, amtStyle);
+            cell(r, 4, 0, avgStyle);
+            cell(r, 5, '매입 없음', formulaStyle);
+        }
+        r++;
+    });
+
+    // 합계
+    const totalRow = r;
+    cell(r, 0, '합계', st.totalName);
+    cell(r, 1, '', st.total);
+    cell(r, 2, totalQtyAll, { ...st.total, numFmt: '#,##0.00' });
+    cell(r, 3, totalAmtAll, st.total);
+    cell(r, 4, '', st.total);
+    cell(r, 5, '', st.total);
+    r += 2;
+
+    // 거점별 적용 현황
+    cell(r, 0, '거점별 적용 현황', { font: { name: F, bold: true, sz: 11, color: { rgb: '143C73' } } });
+    r++;
+    cell(r, 0, '품목명', hdrStyle);
+    cell(r, 1, '가중평균단가', goldHdr);
+    cell(r, 2, '인천 입고수량', hdrStyle);
+    cell(r, 3, '참프레시 입고수량', hdrStyle);
+    cell(r, 4, '영미트 입고수량', hdrStyle);
+    cell(r, 5, '합계 입고수량', hdrStyle);
+    r++;
+
+    MEAT_ITEMS.forEach(item => {
+        const pd = priceData[item.name];
+        const avgP = pd ? pd.avgPrice : 0;
+        const incheon = getItemData('meat', 'incheon', item.name, year, month);
+        const cham = getItemData('meat', 'chamfresh', item.name, year, month);
+        const young = getItemData('meat', 'youngmeat', item.name, year, month);
+
+        cell(r, 0, item.name, nameStyle);
+        cell(r, 1, avgP, avgStyle);
+        cell(r, 2, incheon.ipgoQty, numStyle);
+        cell(r, 3, cham.ipgoQty, numStyle);
+        cell(r, 4, young.ipgoQty, numStyle);
+        cell(r, 5, { f: `C${r+1}+D${r+1}+E${r+1}` }, { ...numStyle, font: { name: F, sz: S, bold: true } });
+        r++;
+    });
+
+    ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: r - 1, c: 5 } });
+    ws['!cols'] = [
+        { wch: 14 }, { wch: 10 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 30 }
+    ];
+
+    return ws;
 }
 
 function downloadProcessedExcel(year, month) {
@@ -2232,14 +2449,19 @@ function applyAllParsedData() {
                     const avgPrice = val.qty > 0 ? val.amt / val.qty : 0;
                     setSourceData('meat', 'ipgo_list', name, year, month, 'ipgoQty', val.qty);
                     setSourceData('meat', 'ipgo_list', name, year, month, 'ipgoAmt', val.amt);
+
+                    // 매입 가중평균 단가 저장 (컨테이너 역할)
+                    const ymKey = getDataKey(year, month);
+                    if (!MEAT_AVG_PRICES[ymKey]) MEAT_AVG_PRICES[ymKey] = {};
+                    MEAT_AVG_PRICES[ymKey][name] = { totalQty: val.qty, totalAmt: val.amt, avgPrice };
+
+                    // 모든 거점에 동일한 매입 가중평균 단가 적용
                     MEAT_FACTORIES.forEach(fac => {
                         const d = getItemData('meat', fac, name, year, month);
-                        if (d.ipgoQty > 0 && d.ipgoPrice === 0) {
-                            d.ipgoPrice = avgPrice;
-                            d.ipgoAmt = d.ipgoQty * avgPrice;
-                            calcWeightedAvg(d);
-                            totalApplied++;
-                        }
+                        d.ipgoPrice = avgPrice;
+                        d.ipgoAmt = d.ipgoQty * avgPrice;
+                        calcWeightedAvg(d);
+                        totalApplied++;
                     });
                 });
             } else {
