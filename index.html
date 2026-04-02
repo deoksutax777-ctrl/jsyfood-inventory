@@ -1292,33 +1292,51 @@ function buildExcelSheet(category, sections, year, month, st, prevSheetName) {
     cell(r, 0, `▣ ${yy}년 ${month}월 ${catName} 수불부`, { font: { name: F, sz: S, bold: true } });
     r += 2;
 
+    // 청기와 5색: 기초=청, 입고=녹, 출고=적갈, 기말=남
+    const C_GICHEO = '143C73', C_IPGO = '006E32', C_CHULGO = 'CB4427', C_GIMAL = '122437', C_GOLD = 'E2BC54';
     // 섹션 헤더 스타일
-    const secHeaderStyle = { font: { name: F, sz: S, bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '122437' } }, numFmt: '#,##0', alignment: { vertical: 'center' } };
+    const secHeaderBase = { font: { name: F, sz: S, bold: true, color: { rgb: 'FFFFFF' } }, numFmt: '#,##0', alignment: { vertical: 'center' } };
+    const secHeaderStyle = { ...secHeaderBase, fill: { fgColor: { rgb: C_GIMAL } } };
+    const secHdrGicheo = { ...secHeaderBase, fill: { fgColor: { rgb: C_GICHEO } } };
+    const secHdrIpgo = { ...secHeaderBase, fill: { fgColor: { rgb: C_IPGO } } };
+    const secHdrChulgo = { ...secHeaderBase, fill: { fgColor: { rgb: C_CHULGO } } };
+    const secHdrGimal = { ...secHeaderBase, fill: { fgColor: { rgb: C_GIMAL } } };
     // 컬럼 헤더 스타일
-    const colHeaderStyle = { font: { name: F, sz: S, bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '143C73' } }, numFmt: '#,##0', alignment: { horizontal: 'center', vertical: 'center' } };
-    // 데이터 셀 기본
+    const colHeaderBase = { font: { name: F, sz: S, bold: true, color: { rgb: 'FFFFFF' } }, numFmt: '#,##0', alignment: { horizontal: 'center', vertical: 'center' } };
+    const colHdrGicheo = { ...colHeaderBase, fill: { fgColor: { rgb: C_GICHEO } } };
+    const colHdrIpgo = { ...colHeaderBase, fill: { fgColor: { rgb: C_IPGO } } };
+    const colHdrChulgo = { ...colHeaderBase, fill: { fgColor: { rgb: C_CHULGO } } };
+    const colHdrGimal = { ...colHeaderBase, fill: { fgColor: { rgb: C_GIMAL } } };
+    const colHeaderStyle = { ...colHeaderBase, fill: { fgColor: { rgb: C_GIMAL } } };
+    // 데이터 셀 기본 + 그룹별 폰트 색상
     const dataBase = { font: { name: F, sz: S }, border: thinBorder };
-    // 합계행
-    const totStyle = { font: { name: F, sz: S, bold: true }, fill: { fgColor: { rgb: 'E2BC54' } }, border: secBorder };
+    const dataGicheo = { font: { name: F, sz: S, color: { rgb: C_GICHEO } }, border: thinBorder };
+    const dataIpgo = { font: { name: F, sz: S, color: { rgb: C_IPGO } }, border: thinBorder };
+    const dataChulgo = { font: { name: F, sz: S, color: { rgb: C_CHULGO } }, border: thinBorder };
+    const dataGimal = { font: { name: F, sz: S, bold: true, color: { rgb: C_GIMAL } }, border: thinBorder };
+    // 합계행 기본 + 그룹별
+    const totBase = { font: { name: F, sz: S, bold: true }, fill: { fgColor: { rgb: 'F8F8F8' } }, border: secBorder };
+    const totStyle = { ...totBase };
+    const totGicheo = { ...totBase, font: { name: F, sz: S, bold: true, color: { rgb: C_GICHEO } } };
+    const totIpgo = { ...totBase, font: { name: F, sz: S, bold: true, color: { rgb: C_IPGO } } };
+    const totChulgo = { ...totBase, font: { name: F, sz: S, bold: true, color: { rgb: C_CHULGO } } };
+    const totGimal = { ...totBase, font: { name: F, sz: S, bold: true, color: { rgb: C_GIMAL } } };
 
     sections.forEach(sec => {
         // 섹션 헤더: B=섹션명, D=기초, G=입고, J=출고, M=기말
-        cell(r, 1, sec.label, secHeaderStyle);
-        cell(r, 3, '기초', secHeaderStyle);
-        cell(r, 6, '입고', secHeaderStyle);
-        cell(r, 9, '출고', secHeaderStyle);
-        cell(r, 12, '기말', secHeaderStyle);
-        // 빈 셀도 배경 채우기
-        [0,2,4,5,7,8,10,11,13,14].forEach(c => cell(r, c, '', secHeaderStyle));
+        cell(r, 0, '', secHeaderStyle); cell(r, 1, sec.label, secHeaderStyle); cell(r, 2, '', secHeaderStyle);
+        cell(r, 3, '기초', secHdrGicheo); cell(r, 4, '', secHdrGicheo); cell(r, 5, '', secHdrGicheo);
+        cell(r, 6, '입고', secHdrIpgo); cell(r, 7, '', secHdrIpgo); cell(r, 8, '', secHdrIpgo);
+        cell(r, 9, '출고', secHdrChulgo); cell(r, 10, '', secHdrChulgo); cell(r, 11, '', secHdrChulgo);
+        cell(r, 12, '기말', secHdrGimal); cell(r, 13, '', secHdrGimal); cell(r, 14, '', secHdrGimal);
         r++;
 
         // 컬럼 서브헤더
-        cell(r, 1, '품목명', colHeaderStyle); cell(r, 2, '단위', colHeaderStyle);
-        ['수량','단가','금액'].forEach((v,i) => cell(r, 3+i, v, colHeaderStyle));
-        ['수량','단가','금액'].forEach((v,i) => cell(r, 6+i, v, colHeaderStyle));
-        ['수량','단가','금액'].forEach((v,i) => cell(r, 9+i, v, colHeaderStyle));
-        ['수량','단가','금액'].forEach((v,i) => cell(r, 12+i, v, colHeaderStyle));
-        cell(r, 0, '', colHeaderStyle);
+        cell(r, 0, '', colHeaderStyle); cell(r, 1, '품목명', colHeaderStyle); cell(r, 2, '단위', colHeaderStyle);
+        ['수량','단가','금액'].forEach((v,i) => cell(r, 3+i, v, colHdrGicheo));
+        ['수량','단가','금액'].forEach((v,i) => cell(r, 6+i, v, colHdrIpgo));
+        ['수량','단가','금액'].forEach((v,i) => cell(r, 9+i, v, colHdrChulgo));
+        ['수량','단가','금액'].forEach((v,i) => cell(r, 12+i, v, colHdrGimal));
         r++;
 
         const dataStartRow = r;
@@ -1333,39 +1351,39 @@ function buildExcelSheet(category, sections, year, month, st, prevSheetName) {
 
             // D: 기초수량 (2월~: 전월 기말 참조)
             if (prevSheetName) {
-                cell(r, 3, { f: `'${prevSheetName}'!M${R}` }, { ...dataBase, numFmt: FMT_QTY });
+                cell(r, 3, { f: `'${prevSheetName}'!M${R}` }, { ...dataGicheo, numFmt: FMT_QTY });
             } else {
-                cell(r, 3, d.gichoQty, { ...dataBase, numFmt: FMT_QTY });
+                cell(r, 3, d.gichoQty, { ...dataGicheo, numFmt: FMT_QTY });
             }
             // E: 기초단가 = ROUNDDOWN(IFERROR(F/D,0),2)
-            cell(r, 4, { f: `ROUNDDOWN(IFERROR(F${R}/D${R},0),2)` }, { ...dataBase, numFmt: FMT_AMT });
+            cell(r, 4, { f: `ROUNDDOWN(IFERROR(F${R}/D${R},0),2)` }, { ...dataGicheo, numFmt: FMT_AMT });
             // F: 기초금액 (2월~: 전월 기말금액 참조)
             if (prevSheetName) {
-                cell(r, 5, { f: `'${prevSheetName}'!O${R}` }, { ...dataBase, numFmt: FMT_AMT });
+                cell(r, 5, { f: `'${prevSheetName}'!O${R}` }, { ...dataGicheo, numFmt: FMT_AMT });
             } else {
-                cell(r, 5, d.gichoAmt, { ...dataBase, numFmt: FMT_AMT });
+                cell(r, 5, d.gichoAmt, { ...dataGicheo, numFmt: FMT_AMT });
             }
 
             // G: 입고수량
-            cell(r, 6, d.ipgoQty, { ...dataBase, numFmt: FMT_QTY });
+            cell(r, 6, d.ipgoQty, { ...dataIpgo, numFmt: FMT_QTY });
             // H: 입고단가 = IFERROR(I/G,0)
-            cell(r, 7, { f: `IFERROR(I${R}/G${R},0)` }, { ...dataBase, numFmt: FMT_AMT });
+            cell(r, 7, { f: `IFERROR(I${R}/G${R},0)` }, { ...dataIpgo, numFmt: FMT_AMT });
             // I: 입고금액
-            cell(r, 8, d.ipgoQty * d.ipgoPrice, { ...dataBase, numFmt: FMT_AMT });
+            cell(r, 8, d.ipgoQty * d.ipgoPrice, { ...dataIpgo, numFmt: FMT_AMT });
 
             // J: 출고수량
-            cell(r, 9, d.chulgoQty, { ...dataBase, numFmt: FMT_QTY });
+            cell(r, 9, d.chulgoQty, { ...dataChulgo, numFmt: FMT_QTY });
             // K: 출고단가 = 총평균 = IFERROR((F+I)/(D+G),0)
-            cell(r, 10, { f: `IFERROR((F${R}+I${R})/(D${R}+G${R}),0)` }, { ...dataBase, numFmt: FMT_AMT });
+            cell(r, 10, { f: `IFERROR((F${R}+I${R})/(D${R}+G${R}),0)` }, { ...dataChulgo, numFmt: FMT_AMT });
             // L: 출고금액 = J*K
-            cell(r, 11, { f: `J${R}*K${R}` }, { ...dataBase, numFmt: FMT_AMT });
+            cell(r, 11, { f: `J${R}*K${R}` }, { ...dataChulgo, numFmt: FMT_AMT });
 
             // M: 기말수량 = D+G-J
-            cell(r, 12, { f: `D${R}+G${R}-J${R}` }, { ...dataBase, numFmt: FMT_QTY });
+            cell(r, 12, { f: `D${R}+G${R}-J${R}` }, { ...dataGimal, numFmt: FMT_QTY });
             // N: 기말단가 = IFERROR(O/M,0)
-            cell(r, 13, { f: `IFERROR(O${R}/M${R},0)` }, { ...dataBase, numFmt: FMT_AMT });
+            cell(r, 13, { f: `IFERROR(O${R}/M${R},0)` }, { ...dataGimal, numFmt: FMT_AMT });
             // O: 기말금액 = F+I-L (기초금액+입고금액-출고금액)
-            cell(r, 14, { f: `F${R}+I${R}-L${R}` }, { ...dataBase, numFmt: FMT_AMT });
+            cell(r, 14, { f: `F${R}+I${R}-L${R}` }, { ...dataGimal, numFmt: FMT_AMT });
 
             r++;
         });
@@ -1377,18 +1395,18 @@ function buildExcelSheet(category, sections, year, month, st, prevSheetName) {
         cell(r, 0, '', totStyle);
         cell(r, 1, '합계', { ...totStyle, font: { name: F, sz: S, bold: true } });
         cell(r, 2, '', totStyle);
-        cell(r, 3, { f: `SUM(D${dataStartRow+1}:D${dataEndRow})` }, { ...totStyle, numFmt: FMT_QTY });
-        cell(r, 4, { f: `ROUNDDOWN(IFERROR(F${TR}/D${TR},0),2)` }, { ...totStyle, numFmt: FMT_AMT });
-        cell(r, 5, { f: `SUM(F${dataStartRow+1}:F${dataEndRow})` }, { ...totStyle, numFmt: FMT_AMT });
-        cell(r, 6, { f: `SUM(G${dataStartRow+1}:G${dataEndRow})` }, { ...totStyle, numFmt: FMT_QTY });
-        cell(r, 7, { f: `ROUNDDOWN(IFERROR(I${TR}/G${TR},0),2)` }, { ...totStyle, numFmt: FMT_AMT });
-        cell(r, 8, { f: `SUM(I${dataStartRow+1}:I${dataEndRow})` }, { ...totStyle, numFmt: FMT_AMT });
-        cell(r, 9, { f: `SUM(J${dataStartRow+1}:J${dataEndRow})` }, { ...totStyle, numFmt: FMT_QTY });
-        cell(r, 10, { f: `ROUNDDOWN(IFERROR(L${TR}/J${TR},0),2)` }, { ...totStyle, numFmt: FMT_AMT });
-        cell(r, 11, { f: `SUM(L${dataStartRow+1}:L${dataEndRow})` }, { ...totStyle, numFmt: FMT_AMT });
-        cell(r, 12, { f: `SUM(M${dataStartRow+1}:M${dataEndRow})` }, { ...totStyle, numFmt: FMT_QTY });
-        cell(r, 13, { f: `ROUNDDOWN(IFERROR(O${TR}/M${TR},0),2)` }, { ...totStyle, numFmt: FMT_AMT });
-        cell(r, 14, { f: `SUM(O${dataStartRow+1}:O${dataEndRow})` }, { ...totStyle, numFmt: FMT_AMT });
+        cell(r, 3, { f: `SUM(D${dataStartRow+1}:D${dataEndRow})` }, { ...totGicheo, numFmt: FMT_QTY });
+        cell(r, 4, { f: `ROUNDDOWN(IFERROR(F${TR}/D${TR},0),2)` }, { ...totGicheo, numFmt: FMT_AMT });
+        cell(r, 5, { f: `SUM(F${dataStartRow+1}:F${dataEndRow})` }, { ...totGicheo, numFmt: FMT_AMT });
+        cell(r, 6, { f: `SUM(G${dataStartRow+1}:G${dataEndRow})` }, { ...totIpgo, numFmt: FMT_QTY });
+        cell(r, 7, { f: `ROUNDDOWN(IFERROR(I${TR}/G${TR},0),2)` }, { ...totIpgo, numFmt: FMT_AMT });
+        cell(r, 8, { f: `SUM(I${dataStartRow+1}:I${dataEndRow})` }, { ...totIpgo, numFmt: FMT_AMT });
+        cell(r, 9, { f: `SUM(J${dataStartRow+1}:J${dataEndRow})` }, { ...totChulgo, numFmt: FMT_QTY });
+        cell(r, 10, { f: `ROUNDDOWN(IFERROR(L${TR}/J${TR},0),2)` }, { ...totChulgo, numFmt: FMT_AMT });
+        cell(r, 11, { f: `SUM(L${dataStartRow+1}:L${dataEndRow})` }, { ...totChulgo, numFmt: FMT_AMT });
+        cell(r, 12, { f: `SUM(M${dataStartRow+1}:M${dataEndRow})` }, { ...totGimal, numFmt: FMT_QTY });
+        cell(r, 13, { f: `ROUNDDOWN(IFERROR(O${TR}/M${TR},0),2)` }, { ...totGimal, numFmt: FMT_AMT });
+        cell(r, 14, { f: `SUM(O${dataStartRow+1}:O${dataEndRow})` }, { ...totGimal, numFmt: FMT_AMT });
         r += 2;
     });
 
