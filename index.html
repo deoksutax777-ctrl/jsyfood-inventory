@@ -1090,6 +1090,9 @@ function renderProcessed() {
     // 투입원가 산출 내역 패널
     html += buildProcInputCostPanel(year, month);
 
+    // 수율분석 패널
+    html += buildYieldAnalysisPanel(year, month);
+
     container.innerHTML = html;
 }
 
@@ -1250,6 +1253,140 @@ function buildProcInputCostPanel(year, month) {
 
         html += '</tbody></table></div>';
     });
+
+    html += '</div>';
+    return html;
+}
+
+// ============================================================
+// 수율분석 패널 (원육 부위별: 표준소요량 vs 실제출고량)
+// ============================================================
+function calcYieldAnalysis(year, month) {
+    const result = {};
+
+    PROC_FACTORIES.forEach(fac => {
+        const facResult = {};
+
+        // 1. 표준소요량 = Σ(가공육 실제생산수량 × 표준무게) per 원육 부위
+        PROC_BOM.forEach(bom => {
+            const procItem = getItemData('processed', fac, bom.product, year, month);
+            const prodQty = procItem.ipgoQty || 0;
+            if (prodQty <= 0) return;
+
+            const stdRequired = prodQty * bom.stdWeight;
+            if (!facResult[bom.rawMeat]) {
+                facResult[bom.rawMeat] = { stdRequired: 0, actualUsed: 0, details: [] };
+            }
+            facResult[bom.rawMeat].stdRequired += stdRequired;
+            facResult[bom.rawMeat].details.push({
+                product: bom.product,
+                prodQty,
+                stdWeight: bom.stdWeight,
+                stdRequired
+            });
+        });
+
+        // 2. 실제출고량 = 원육 수불부 chulgoQty
+        Object.keys(facResult).forEach(rawMeat => {
+            const meatItem = getItemData('meat', fac, rawMeat, year, month);
+            facResult[rawMeat].actualUsed = meatItem.chulgoQty || 0;
+
+            const std = facResult[rawMeat].stdRequired;
+            const actual = facResult[rawMeat].actualUsed;
+            facResult[rawMeat].diff = std - actual;
+            facResult[rawMeat].yieldRate = actual > 0 ? (std / actual * 100) : 0;
+        });
+
+        result[fac] = facResult;
+    });
+
+    return result;
+}
+
+function buildYieldAnalysisPanel(year, month) {
+    // 원육 계산 확보
+    calcMeatTotals(year, month);
+    const analysis = calcYieldAnalysis(year, month);
+
+    let html = `<div class="section" style="margin-top:16px;">
+        <div class="section-header">
+            <span>${year}년 ${month}월 원육 수율분석</span>
+            <span style="font-size:11px; font-weight:normal; color:#ccc;">표준소요량 vs 실제출고량 (원육 부위별)</span>
+        </div>`;
+
+    const facLabels = { incheon: '인천공장', chamfresh: '참프레시', youngmeat: '영미트' };
+    let hasAnyData = false;
+
+    PROC_FACTORIES.forEach(fac => {
+        const facData = analysis[fac] || {};
+        const activeRawMeats = Object.entries(facData).filter(([, d]) => d.stdRequired > 0 || d.actualUsed > 0);
+        if (activeRawMeats.length === 0) return;
+        hasAnyData = true;
+
+        html += `<div class="section-header sub" style="margin-top:8px;">${facLabels[fac]}</div>`;
+        html += `<div class="table-wrap"><table>
+            <thead><tr>
+                <th style="min-width:80px;">원육 부위</th>
+                <th>표준소요량(kg)</th>
+                <th>실제출고량(kg)</th>
+                <th>차이(kg)</th>
+                <th>수율(%)</th>
+                <th>판정</th>
+            </tr></thead><tbody>`;
+
+        let totalStd = 0, totalActual = 0;
+
+        activeRawMeats.sort((a, b) => b[1].stdRequired - a[1].stdRequired).forEach(([rawMeat, d]) => {
+            totalStd += d.stdRequired;
+            totalActual += d.actualUsed;
+
+            const diffColor = d.diff >= 0 ? 'var(--green)' : 'var(--red-brown)';
+            const yieldColor = d.yieldRate >= 100 ? 'var(--green)' : d.yieldRate >= 95 ? 'var(--gold)' : 'var(--red-brown)';
+            const judge = d.actualUsed <= 0 ? '—'
+                : d.yieldRate >= 100 ? '양호' : d.yieldRate >= 95 ? '주의' : '로스';
+            const judgeColor = judge === '양호' ? 'var(--green)' : judge === '주의' ? 'var(--gold)' : 'var(--red-brown)';
+
+            html += `<tr>
+                <td style="font-weight:600;">${rawMeat}</td>
+                <td style="text-align:right;">${fmt(d.stdRequired)}</td>
+                <td style="text-align:right;">${fmt(d.actualUsed)}</td>
+                <td style="text-align:right; color:${diffColor}; font-weight:600;">${d.diff >= 0 ? '+' : ''}${fmt(d.diff)}</td>
+                <td style="text-align:right; color:${yieldColor}; font-weight:700;">${d.actualUsed > 0 ? d.yieldRate.toFixed(1) + '%' : '—'}</td>
+                <td style="text-align:center; font-weight:700; color:${judgeColor};">${judge}</td>
+            </tr>`;
+
+            // 상세 내역 (접이식 아닌 서브행으로)
+            d.details.forEach(det => {
+                html += `<tr style="font-size:11px; color:#888; background:#fafafa;">
+                    <td style="padding-left:20px;">└ ${det.product}</td>
+                    <td style="text-align:right;">${fmt(det.stdRequired)}</td>
+                    <td colspan="4" style="text-align:left; padding-left:8px;">
+                        ${fmt(det.prodQty)}개 × ${det.stdWeight}kg
+                    </td>
+                </tr>`;
+            });
+        });
+
+        // 합계행
+        const totalDiff = totalStd - totalActual;
+        const totalYield = totalActual > 0 ? (totalStd / totalActual * 100) : 0;
+        html += `<tr class="total-row">
+            <td style="font-weight:700;">합계</td>
+            <td style="text-align:right; font-weight:700;">${fmt(totalStd)}</td>
+            <td style="text-align:right; font-weight:700;">${fmt(totalActual)}</td>
+            <td style="text-align:right; font-weight:700; color:${totalDiff >= 0 ? 'var(--green)' : 'var(--red-brown)'};">${totalDiff >= 0 ? '+' : ''}${fmt(totalDiff)}</td>
+            <td style="text-align:right; font-weight:700;">${totalActual > 0 ? totalYield.toFixed(1) + '%' : '—'}</td>
+            <td></td>
+        </tr>`;
+
+        html += '</tbody></table></div>';
+    });
+
+    if (!hasAnyData) {
+        html += `<div style="padding:20px; text-align:center; color:#999; font-size:13px;">
+            원육/가공육 데이터를 입력하면 수율분석이 표시됩니다.
+        </div>`;
+    }
 
     html += '</div>';
     return html;
@@ -2104,8 +2241,140 @@ function downloadProcessedExcel(year, month) {
     const facLabels = { incheon: '인천공장', chamfresh: '참프레시', youngmeat: '영미트' };
     const vs = buildVerificationSheet('processed', PROC_SECTIONS, PROC_FACTORIES, facLabels, PROC_ITEMS, year, month, false);
     XLSX.utils.book_append_sheet(wb, vs, '검증');
+    // 수율분석 시트
+    const ys = buildYieldAnalysisSheet(year, month);
+    XLSX.utils.book_append_sheet(wb, ys, '수율분석');
     const ym = `${year % 100}${String(month).padStart(2, '0')}`;
     writeFileNoGrid(wb, `재고수불부_가공육_${ym}.xlsx`);
+}
+
+// ============================================================
+// 수율분석 엑셀 시트
+// ============================================================
+function buildYieldAnalysisSheet(year, month) {
+    const ws = {};
+    const F = XL_FONT, S = XL_SZ;
+    const thinBorder = { bottom:{style:'thin',color:{rgb:'CCCCCC'}} };
+
+    function cell(row, col, val, style) {
+        const ref = XLSX.utils.encode_cell({ r: row, c: col });
+        if (typeof val === 'object' && val !== null && val.f) {
+            ws[ref] = { t: 'n', f: val.f, s: style };
+        } else if (typeof val === 'number') {
+            ws[ref] = { t: 'n', v: val, s: style };
+        } else {
+            ws[ref] = { t: 's', v: val != null ? val : '', s: style };
+        }
+    }
+
+    const C_GIMAL = '122437', C_GREEN = '006E32', C_RED = 'CB4427', C_GOLD = 'E2BC54';
+    const titleStyle = { font: { name: F, bold: true, sz: 14, color: { rgb: C_GIMAL } } };
+    const subtitleStyle = { font: { name: F, sz: 10, color: { rgb: '888888' } } };
+    const hdrStyle = { font: { name: F, bold: true, sz: S, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: C_GIMAL } }, alignment: { horizontal: 'center', vertical: 'center' }, border: XL_BORDER };
+    const secStyle = { font: { name: F, bold: true, sz: 11, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '143C73' } }, alignment: { vertical: 'center' } };
+    const dataBase = { font: { name: F, sz: S }, border: thinBorder };
+    const numStyle = { ...dataBase, alignment: { horizontal: 'right', vertical: 'center' }, numFmt: '#,##0.00' };
+    const pctStyle = { ...dataBase, alignment: { horizontal: 'right', vertical: 'center' }, numFmt: '0.0"%"' };
+    const nameStyle = { ...dataBase, font: { name: F, sz: S, bold: true, color: { rgb: C_GIMAL } }, alignment: { horizontal: 'left', vertical: 'center' } };
+    const detailStyle = { font: { name: F, sz: 9, color: { rgb: '999999' } }, border: thinBorder, alignment: { horizontal: 'left' } };
+    const detailNumStyle = { font: { name: F, sz: 9, color: { rgb: '999999' } }, border: thinBorder, alignment: { horizontal: 'right' }, numFmt: '#,##0.00' };
+    const totBase = { font: { name: F, sz: S, bold: true }, fill: { fgColor: { rgb: 'F8F8F8' } },
+        border: { top:{style:'medium',color:{rgb:C_GIMAL}}, bottom:{style:'medium',color:{rgb:C_GIMAL}}, left:{style:'thin',color:{rgb:'CCCCCC'}}, right:{style:'thin',color:{rgb:'CCCCCC'}} } };
+    const totStyle = { ...totBase, alignment: { horizontal: 'right' }, numFmt: '#,##0.00' };
+    const totNameStyle = { ...totBase, alignment: { horizontal: 'left' } };
+
+    // 원육 계산
+    calcMeatTotals(year, month);
+    const analysis = calcYieldAnalysis(year, month);
+
+    let r = 0;
+    cell(r, 0, `${year}년 ${month}월 원육 수율분석`, titleStyle);
+    r++;
+    cell(r, 0, '표준소요량 = Σ(가공육 실제생산수량 × 표준무게)  |  수율 = 표준소요량 ÷ 실제출고량 × 100%', subtitleStyle);
+    r += 2;
+
+    const facLabels = { incheon: '인천공장', chamfresh: '참프레시', youngmeat: '영미트' };
+
+    PROC_FACTORIES.forEach(fac => {
+        const facData = analysis[fac] || {};
+        const activeRawMeats = Object.entries(facData).filter(([, d]) => d.stdRequired > 0 || d.actualUsed > 0);
+
+        // 섹션 헤더
+        for (let c = 0; c <= 5; c++) cell(r, c, c === 0 ? facLabels[fac] : '', secStyle);
+        r++;
+
+        // 컬럼 헤더
+        cell(r, 0, '원육 부위', hdrStyle);
+        cell(r, 1, '표준소요량(kg)', hdrStyle);
+        cell(r, 2, '실제출고량(kg)', hdrStyle);
+        cell(r, 3, '차이(kg)', hdrStyle);
+        cell(r, 4, '수율(%)', hdrStyle);
+        cell(r, 5, '판정', hdrStyle);
+        r++;
+
+        if (activeRawMeats.length === 0) {
+            cell(r, 0, '데이터 없음', { ...dataBase, font: { name: F, sz: S, color: { rgb: '999999' } } });
+            r += 2;
+            return;
+        }
+
+        let totalStd = 0, totalActual = 0;
+        const dataStartR = r;
+
+        activeRawMeats.sort((a, b) => b[1].stdRequired - a[1].stdRequired).forEach(([rawMeat, d]) => {
+            totalStd += d.stdRequired;
+            totalActual += d.actualUsed;
+
+            const R = r + 1;
+            cell(r, 0, rawMeat, nameStyle);
+            cell(r, 1, d.stdRequired, numStyle);
+            cell(r, 2, d.actualUsed, numStyle);
+            // 차이 = B - C
+            cell(r, 3, { f: `B${R}-C${R}` }, {
+                ...numStyle,
+                font: { name: F, sz: S, bold: true, color: { rgb: d.diff >= 0 ? C_GREEN : C_RED } }
+            });
+            // 수율 = B/C * 100
+            cell(r, 4, d.actualUsed > 0 ? d.yieldRate : 0, {
+                ...numStyle, numFmt: '0.0',
+                font: { name: F, sz: S, bold: true, color: { rgb: d.yieldRate >= 100 ? C_GREEN : d.yieldRate >= 95 ? C_GOLD : C_RED } }
+            });
+            const judge = d.actualUsed <= 0 ? '—' : d.yieldRate >= 100 ? '양호' : d.yieldRate >= 95 ? '주의' : '로스';
+            cell(r, 5, judge, {
+                ...dataBase,
+                font: { name: F, sz: S, bold: true, color: { rgb: judge === '양호' ? C_GREEN : judge === '주의' ? C_GOLD : C_RED } },
+                alignment: { horizontal: 'center' }
+            });
+            r++;
+
+            // 상세 내역 (어떤 가공육이 이 원육을 사용하는지)
+            d.details.forEach(det => {
+                cell(r, 0, `  └ ${det.product}`, detailStyle);
+                cell(r, 1, det.stdRequired, detailNumStyle);
+                cell(r, 2, `${det.prodQty}개 × ${det.stdWeight}kg`, { ...detailStyle, alignment: { horizontal: 'right' } });
+                cell(r, 3, '', detailStyle);
+                cell(r, 4, '', detailStyle);
+                cell(r, 5, '', detailStyle);
+                r++;
+            });
+        });
+
+        // 합계행
+        const TR = r + 1;
+        cell(r, 0, '합계', totNameStyle);
+        cell(r, 1, totalStd, totStyle);
+        cell(r, 2, totalActual, totStyle);
+        cell(r, 3, totalStd - totalActual, { ...totStyle, font: { name: F, sz: S, bold: true, color: { rgb: (totalStd - totalActual) >= 0 ? C_GREEN : C_RED } } });
+        cell(r, 4, totalActual > 0 ? (totalStd / totalActual * 100) : 0, { ...totStyle, numFmt: '0.0' });
+        cell(r, 5, '', totBase);
+        r += 2;
+    });
+
+    ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: r - 1, c: 5 } });
+    ws['!cols'] = [
+        { wch: 22 }, { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 10 }, { wch: 8 }
+    ];
+    return ws;
 }
 
 // ============================================================
