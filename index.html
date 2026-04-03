@@ -365,7 +365,8 @@ const SAUCE_ITEMS = {
     ],
     product: [
         { name: '돼지갈비양념', unit: '20kg' },
-        { name: '마늘갈비양념', unit: '7kg' }
+        { name: '마늘갈비양념', unit: '7kg' },
+        { name: 'LA갈비양념', unit: 'kg' }
     ]
 };
 
@@ -435,6 +436,65 @@ const PROC_SECTIONS = [
 ];
 
 // ============================================================
+// 가공육 투입원가 BOM (25년 12월 기준 → 26년 적용)
+// product=가공육품목, rawMeat=원육부위, stdWeight=표준무게(kg/unit)
+// 배분비율 = (stdWeight × 생산수량) / SUM(같은 rawMeat의 stdWeight × 생산수량)
+// 투입원가 = 원육출고금액 × 배분비율
+// ============================================================
+const PROC_BOM = [
+    // 수원왕갈비(15cm)
+    { product: '수원왕갈비(15cm)', rawMeat: '갈비', stdWeight: 0.4 },
+    // 수원왕갈비(8cm)
+    { product: '수원왕갈비(8cm)', rawMeat: '갈비', stdWeight: 0.22 },
+    { product: '수원왕갈비(8cm)', rawMeat: '진갈비살', stdWeight: 0.1 },
+    // 서울왕갈비(8cm,양념)
+    { product: '서울왕갈비(8cm,양념)', rawMeat: '갈비', stdWeight: 0.09 },
+    { product: '서울왕갈비(8cm,양념)', rawMeat: '살치살', stdWeight: 0.09 },
+    // 생갈비
+    { product: '생갈비', rawMeat: '갈비', stdWeight: 0.22 },
+    { product: '생갈비', rawMeat: '진갈비살', stdWeight: 0.1 },
+    // 생갈비(15cm)
+    { product: '생갈비(15cm)', rawMeat: '갈비', stdWeight: 0.4 },
+    // 양념LA갈비
+    { product: '양념LA갈비', rawMeat: '갈비', stdWeight: 0.405 },
+    { product: '양념LA갈비', rawMeat: '살치살', stdWeight: 0.585 },
+    // 돼지갈비
+    { product: '돼지갈비', rawMeat: '돈목살', stdWeight: 0.13 },
+    { product: '돼지갈비', rawMeat: '돼지뼈', stdWeight: 0.09 },
+    // 돼지갈비(동그랑땡)
+    { product: '돼지갈비(동그랑땡)', rawMeat: '돈목살', stdWeight: 1.8 },
+    { product: '돼지갈비(동그랑땡)', rawMeat: '돼지뼈', stdWeight: 0.6 },
+    // 마늘갈비
+    { product: '마늘갈비', rawMeat: '갈비', stdWeight: 1 },
+    // 양념갈비[선물] — 갈비 2회 사용 (0.09 + 0.18)
+    { product: '양념갈비[선물]', rawMeat: '갈비', stdWeight: 0.09 },
+    { product: '양념갈비[선물]', rawMeat: '살치살', stdWeight: 0.09 },
+    { product: '양념갈비[선물]', rawMeat: '갈비', stdWeight: 0.18 },
+    // 소불고기[선물]
+    { product: '소불고기[선물]', rawMeat: '척아이롤', stdWeight: 0.25 },
+    // LA갈비[선물]
+    { product: 'LA갈비[선물]', rawMeat: '갈비', stdWeight: 0.22 },
+    // 양념구이[선물]
+    { product: '양념구이[선물]', rawMeat: '갈비', stdWeight: 0.15 },
+    { product: '양념구이[선물]', rawMeat: '부채살', stdWeight: 0.24 },
+    // 청기와양념구이
+    { product: '청기와양념구이', rawMeat: '갈비', stdWeight: 0.05 },
+    { product: '청기와양념구이', rawMeat: '부채살', stdWeight: 0.08 },
+    // 홍두깨
+    { product: '홍두깨', rawMeat: '홍두깨', stdWeight: 1 },
+    // 안창살
+    { product: '안창살', rawMeat: '안창살', stdWeight: 1 },
+    // 우설
+    { product: '우설', rawMeat: '우설', stdWeight: 1 },
+    // 깐양
+    { product: '깐양', rawMeat: '막내장', stdWeight: 0.5 },
+    { product: '깐양', rawMeat: '깐양', stdWeight: 0.5 },
+    // 육회
+    { product: '육회', rawMeat: '홍두깨', stdWeight: 1 },
+    // 잡육 — BOM 없음 (부산물, 투입원가 미적용)
+];
+
+// ============================================================
 // 데이터 저장소
 // ============================================================
 let DATA = {};
@@ -444,6 +504,13 @@ let PARSED_SOURCE = {};
 // 매입 가중평균 단가 저장소
 // MEAT_AVG_PRICES[yearMonth][itemName] = { totalQty, totalAmt, avgPrice }
 let MEAT_AVG_PRICES = {};
+
+// 가공육 투입원가 산출 결과 저장소
+// PROC_INPUT_COSTS[ymKey][factory][productName] = {
+//   totalCost, ipgoPrice,
+//   details: [{ rawMeat, stdWeight, prodQty, totalStdWt, allocRatio, meatChulgoAmt, inputCost }]
+// }
+let PROC_INPUT_COSTS = {};
 
 function getMeatAvgPrice(itemName, year, month) {
     const key = getDataKey(year, month);
@@ -528,6 +595,76 @@ function calcWeightedAvg(item) {
     item.gimalQty = item.gichoQty + item.ipgoQty - item.chulgoQty;
     item.gimalPrice = avgPrice2;
     item.gimalAmt = item.gimalQty * avgPrice2;
+}
+
+// ============================================================
+// 가공육 투입원가 계산
+// 원육 수불부의 출고금액 × 배분비율 → 가공육 입고단가 자동 산출
+// ============================================================
+function calcProcInputCost(year, month) {
+    const ymKey = getDataKey(year, month);
+    if (!PROC_INPUT_COSTS[ymKey]) PROC_INPUT_COSTS[ymKey] = {};
+
+    PROC_FACTORIES.forEach(fac => {
+        PROC_INPUT_COSTS[ymKey][fac] = {};
+
+        // 1단계: 각 BOM 항목의 (표준무게 × 생산수량) 계산
+        const bomEntries = PROC_BOM.map(bom => {
+            const procItem = getItemData('processed', fac, bom.product, year, month);
+            const prodQty = procItem.ipgoQty; // 생산수량 = 입고수량
+            return { ...bom, prodQty, totalStdWt: bom.stdWeight * prodQty };
+        });
+
+        // 2단계: 원육 부위별 총 표준무게 합계 (배분 분모)
+        const rawMeatTotals = {};
+        bomEntries.forEach(e => {
+            if (e.totalStdWt <= 0) return;
+            if (!rawMeatTotals[e.rawMeat]) rawMeatTotals[e.rawMeat] = 0;
+            rawMeatTotals[e.rawMeat] += e.totalStdWt;
+        });
+
+        // 3단계: 배분비율 산출 + 투입원가 계산
+        bomEntries.forEach(e => {
+            const denominator = rawMeatTotals[e.rawMeat] || 0;
+            e.allocRatio = denominator > 0 ? e.totalStdWt / denominator : 0;
+
+            // 원육 출고금액 (같은 거점, 같은 월)
+            const meatItem = getItemData('meat', fac, e.rawMeat, year, month);
+            e.meatChulgoAmt = meatItem.chulgoAmt || 0;
+
+            // 투입원가 = 원육출고금액 × 배분비율
+            e.inputCost = e.meatChulgoAmt * e.allocRatio;
+        });
+
+        // 4단계: 가공육 품목별 투입원가 합산 → 입고단가 설정
+        const productCosts = {};
+        bomEntries.forEach(e => {
+            if (!productCosts[e.product]) productCosts[e.product] = { totalCost: 0, details: [] };
+            productCosts[e.product].totalCost += e.inputCost;
+            productCosts[e.product].details.push({
+                rawMeat: e.rawMeat,
+                stdWeight: e.stdWeight,
+                prodQty: e.prodQty,
+                totalStdWt: e.totalStdWt,
+                allocRatio: e.allocRatio,
+                meatChulgoAmt: e.meatChulgoAmt,
+                inputCost: e.inputCost
+            });
+        });
+
+        Object.entries(productCosts).forEach(([productName, cost]) => {
+            const procItem = getItemData('processed', fac, productName, year, month);
+            cost.ipgoPrice = procItem.ipgoQty > 0 ? cost.totalCost / procItem.ipgoQty : 0;
+
+            // 입고단가/금액 자동 설정
+            if (cost.totalCost > 0) {
+                procItem.ipgoPrice = cost.ipgoPrice;
+                procItem.ipgoAmt = cost.totalCost;
+            }
+
+            PROC_INPUT_COSTS[ymKey][fac][productName] = cost;
+        });
+    });
 }
 
 // ============================================================
@@ -896,6 +1033,11 @@ function buildMeatTable(section, year, month, isTotal) {
 // 가공육 렌더링 (원육과 동일 패턴)
 // ============================================================
 function calcProcTotals(year, month) {
+    // 원육 먼저 계산 (투입원가의 원천)
+    calcMeatTotals(year, month);
+    // 투입원가 산출 (원육출고금액 × 배분비율 → 가공육 입고단가)
+    calcProcInputCost(year, month);
+
     PROC_ITEMS.forEach(item => {
         const total = getItemData('processed', 'total', item.name, year, month);
         total.gichoQty = 0; total.gichoAmt = 0;
@@ -940,11 +1082,177 @@ function renderProcessed() {
 
     PROC_SECTIONS.forEach(sec => {
         html += `<div class="section-header sub">${sec.label}</div>`;
-        html += buildGenericTable('processed', sec, year, month, sec.key === 'total');
+        html += buildProcTable(sec, year, month, sec.key === 'total');
     });
 
     html += '</div>';
+
+    // 투입원가 산출 내역 패널
+    html += buildProcInputCostPanel(year, month);
+
     container.innerHTML = html;
+}
+
+// 가공육 전용 테이블 (입고단가=투입원가 기반, 읽기전용)
+function buildProcTable(section, year, month, isTotal) {
+    let html = `<div class="table-wrap"><table>
+        <thead>
+            <tr>
+                <th rowspan="2" style="min-width:140px;">품목명</th>
+                <th rowspan="2" style="min-width:40px;">단위</th>
+                <th colspan="3" class="group-header col-gicheo">기초</th>
+                <th colspan="3" class="group-header col-ipgo">입고(투입원가)</th>
+                <th colspan="3" class="group-header col-chulgo">출고</th>
+                <th colspan="3" class="group-header col-gimal">기말</th>
+            </tr>
+            <tr>
+                <th class="col-gicheo">수량</th><th class="col-gicheo">단가</th><th class="col-gicheo">금액</th>
+                <th class="col-ipgo">수량</th><th class="col-ipgo">단가</th><th class="col-ipgo">금액</th>
+                <th class="col-chulgo">수량</th><th class="col-chulgo">단가</th><th class="col-chulgo">금액</th>
+                <th class="col-gimal">수량</th><th class="col-gimal">단가</th><th class="col-gimal">금액</th>
+            </tr>
+        </thead><tbody>`;
+
+    let totals = { gichoAmt: 0, ipgoAmt: 0, chulgoAmt: 0, gimalAmt: 0 };
+
+    section.items.forEach(item => {
+        const d = getItemData('processed', section.key, item.name, year, month);
+        totals.gichoAmt += d.gichoAmt;
+        totals.ipgoAmt += d.ipgoAmt;
+        totals.chulgoAmt += d.chulgoAmt;
+        totals.gimalAmt += d.gimalAmt;
+
+        if (isTotal) {
+            html += `<tr>
+                <td class="item-name">${item.name}</td>
+                <td class="item-unit">${item.unit}</td>
+                <td class="cell-calc cell-gicheo">${fmt(d.gichoQty)}</td>
+                <td class="cell-calc cell-gicheo">${fmt(d.gichoPrice)}</td>
+                <td class="cell-calc cell-gicheo">${fmtAmt(d.gichoAmt)}</td>
+                <td class="cell-calc cell-ipgo">${fmt(d.ipgoQty)}</td>
+                <td class="cell-calc cell-ipgo">${fmt(d.ipgoPrice)}</td>
+                <td class="cell-calc cell-ipgo">${fmtAmt(d.ipgoAmt)}</td>
+                <td class="cell-calc cell-chulgo">${fmt(d.chulgoQty)}</td>
+                <td class="cell-calc cell-chulgo">${fmt(d.chulgoPrice)}</td>
+                <td class="cell-calc cell-chulgo">${fmtAmt(d.chulgoAmt)}</td>
+                <td class="cell-calc cell-gimal ${d.gimalQty < 0 ? 'cell-negative' : ''}">${fmt(d.gimalQty)}</td>
+                <td class="cell-calc cell-gimal">${fmt(d.gimalPrice)}</td>
+                <td class="cell-calc cell-gimal">${fmtAmt(d.gimalAmt)}</td>
+            </tr>`;
+        } else {
+            // 공장별: 입고수량=입력가능, 입고단가=투입원가 자동(읽기전용), 출고수량=입력가능
+            html += `<tr>
+                <td class="item-name">${item.name}</td>
+                <td class="item-unit">${item.unit}</td>
+                <td class="cell-calc cell-gicheo">${fmt(d.gichoQty)}</td>
+                <td class="cell-calc cell-gicheo">${fmt(d.gichoPrice)}</td>
+                <td class="cell-calc cell-gicheo">${fmtAmt(d.gichoAmt)}</td>
+                <td><input class="cell-input" type="text" value="${d.ipgoQty || ''}"
+                    onchange="onInputChange('processed','${section.key}','${item.name}','ipgoQty',this.value)"></td>
+                <td class="cell-calc cell-ipgo" title="투입원가 기반 자동산출">${fmt(d.ipgoPrice)}</td>
+                <td class="cell-calc cell-ipgo">${fmtAmt(d.ipgoAmt)}</td>
+                <td><input class="cell-input" type="text" value="${d.chulgoQty || ''}"
+                    onchange="onInputChange('processed','${section.key}','${item.name}','chulgoQty',this.value)"></td>
+                <td class="cell-calc cell-chulgo">${fmt(d.chulgoPrice)}</td>
+                <td class="cell-calc cell-chulgo">${fmtAmt(d.chulgoAmt)}</td>
+                <td class="cell-calc cell-gimal ${d.gimalQty < 0 ? 'cell-negative' : ''}">${fmt(d.gimalQty)}</td>
+                <td class="cell-calc cell-gimal">${fmt(d.gimalPrice)}</td>
+                <td class="cell-calc cell-gimal">${fmtAmt(d.gimalAmt)}</td>
+            </tr>`;
+        }
+    });
+
+    html += `<tr class="total-row">
+        <td class="item-name">합계</td><td></td>
+        <td></td><td></td><td class="cell-calc">${fmtAmt(totals.gichoAmt)}</td>
+        <td></td><td></td><td class="cell-calc">${fmtAmt(totals.ipgoAmt)}</td>
+        <td></td><td></td><td class="cell-calc">${fmtAmt(totals.chulgoAmt)}</td>
+        <td></td><td></td><td class="cell-calc">${fmtAmt(totals.gimalAmt)}</td>
+    </tr>`;
+
+    html += '</tbody></table></div>';
+    return html;
+}
+
+// 가공육 투입원가 산출 내역 패널
+function buildProcInputCostPanel(year, month) {
+    const ymKey = getDataKey(year, month);
+    const costs = PROC_INPUT_COSTS[ymKey];
+
+    let html = `<div class="section" style="margin-top:16px;">
+        <div class="section-header">
+            <span>${year}년 ${month}월 가공육 투입원가 산출 내역</span>
+            <span style="font-size:11px; font-weight:normal; color:#ccc;">원육출고금액 × 배분비율 → 투입원가</span>
+        </div>`;
+
+    if (!costs) {
+        html += `<div style="padding:20px; text-align:center; color:#999; font-size:13px;">
+            원육/가공육 데이터를 입력하면 투입원가가 산출됩니다.
+        </div></div>`;
+        return html;
+    }
+
+    PROC_FACTORIES.forEach(fac => {
+        const facLabel = { incheon: '인천공장', chamfresh: '참프레시', youngmeat: '영미트' }[fac];
+        const facCosts = costs[fac] || {};
+
+        // 데이터가 있는 품목만
+        const activeProducts = Object.entries(facCosts).filter(([, c]) => c.totalCost > 0);
+        if (activeProducts.length === 0) return;
+
+        html += `<div class="section-header sub" style="margin-top:8px;">${facLabel}</div>`;
+        html += `<div class="table-wrap"><table>
+            <thead><tr>
+                <th style="min-width:140px;">가공육 품목</th>
+                <th>원육 부위</th>
+                <th>표준무게</th>
+                <th>생산수량</th>
+                <th>배분비율</th>
+                <th style="color:var(--red-brown);">원육출고금액</th>
+                <th style="color:var(--green);">투입원가</th>
+            </tr></thead><tbody>`;
+
+        activeProducts.forEach(([productName, cost]) => {
+            const rowCount = cost.details.filter(d => d.inputCost > 0).length;
+            let first = true;
+
+            cost.details.forEach(d => {
+                if (d.inputCost <= 0) return;
+                html += `<tr>`;
+                if (first) {
+                    html += `<td class="item-name" rowspan="${rowCount}" style="vertical-align:top;">
+                        ${productName}
+                        <div style="font-size:10px; color:var(--green); font-weight:700; margin-top:2px;">
+                            입고단가: ${fmt(cost.ipgoPrice)}
+                        </div>
+                    </td>`;
+                    first = false;
+                }
+                html += `<td style="text-align:center;">${d.rawMeat}</td>
+                    <td style="text-align:right;">${d.stdWeight}</td>
+                    <td style="text-align:right;">${fmt(d.prodQty)}</td>
+                    <td style="text-align:right;">${(d.allocRatio * 100).toFixed(2)}%</td>
+                    <td style="text-align:right; color:var(--red-brown);">${fmtAmt(d.meatChulgoAmt)}</td>
+                    <td style="text-align:right; color:var(--green); font-weight:600;">${fmtAmt(d.inputCost)}</td>
+                </tr>`;
+            });
+
+            // 품목 소계
+            if (rowCount > 1) {
+                html += `<tr style="background:#f8fbff; border-top:1px solid var(--border);">
+                    <td colspan="6" style="text-align:right; font-weight:600; font-size:11px; color:#666;">
+                        ${productName} 투입원가 합계
+                    </td>
+                    <td style="text-align:right; color:var(--green); font-weight:700;">${fmtAmt(cost.totalCost)}</td>
+                </tr>`;
+            }
+        });
+
+        html += '</tbody></table></div>';
+    });
+
+    html += '</div>';
+    return html;
 }
 
 // 원육/가공육 공용 테이블 빌더
@@ -1044,6 +1352,8 @@ function onInputChange(category, section, itemName, field, value) {
             d.ipgoAmt = d.ipgoQty * avgP;
         }
     }
+    // 가공육: ipgoPrice는 수동 변경 불가 (투입원가 기반 자동산출)
+    // ipgoQty 변경 시 calcProcTotals에서 투입원가 재계산됨
     calcWeightedAvg(d);
     renderCurrentTab();
 }
@@ -1168,7 +1478,7 @@ function renderVerification() {
     // 원육 검증
     html += buildVerifyTable('원육', 'meat', MEAT_FACTORIES, facLabels, MEAT_ITEMS, true);
     // 가공육 검증
-    html += buildVerifyTable('가공육', 'processed', PROC_FACTORIES, facLabels, PROC_ITEMS, true);
+    html += buildVerifyTable('가공육', 'processed', PROC_FACTORIES, facLabels, PROC_ITEMS, false);
     // 소스 검증
     const sauceFacLabels = { raw: '원재료' };
     const sauceSections = [{ key: 'raw', items: SAUCE_ITEMS.raw }];
@@ -1200,6 +1510,7 @@ function loadMonth() {
 function saveData() {
     localStorage.setItem('jsyfood_inventory', JSON.stringify(DATA));
     localStorage.setItem('jsyfood_parsed_source', JSON.stringify(PARSED_SOURCE));
+    localStorage.setItem('jsyfood_meat_avg', JSON.stringify(MEAT_AVG_PRICES));
     alert('저장 완료');
 }
 
@@ -1209,6 +1520,8 @@ function loadSavedData() {
         DATA = JSON.parse(saved);
         const savedSource = localStorage.getItem('jsyfood_parsed_source');
         if (savedSource) PARSED_SOURCE = JSON.parse(savedSource);
+        const savedMeatAvg = localStorage.getItem('jsyfood_meat_avg');
+        if (savedMeatAvg) MEAT_AVG_PRICES = JSON.parse(savedMeatAvg);
         renderCurrentTab();
         alert('불러오기 완료');
     } else {
@@ -1789,7 +2102,7 @@ function buildMeatAvgPriceSheet(year, month) {
 function downloadProcessedExcel(year, month) {
     const wb = buildMultiSheetWb('processed', PROC_SECTIONS, year, month, 20, calcProcTotals);
     const facLabels = { incheon: '인천공장', chamfresh: '참프레시', youngmeat: '영미트' };
-    const vs = buildVerificationSheet('processed', PROC_SECTIONS, PROC_FACTORIES, facLabels, PROC_ITEMS, year, month, true);
+    const vs = buildVerificationSheet('processed', PROC_SECTIONS, PROC_FACTORIES, facLabels, PROC_ITEMS, year, month, false);
     XLSX.utils.book_append_sheet(wb, vs, '검증');
     const ym = `${year % 100}${String(month).padStart(2, '0')}`;
     writeFileNoGrid(wb, `재고수불부_가공육_${ym}.xlsx`);
@@ -1818,15 +2131,18 @@ function initDefaultData() {
     const defaults_product = {
         incheon: {
             '돼지갈비양념': { qty: 6, price: 11800.25 },
-            '마늘갈비양념': { qty: 46, price: 18033.87 }
+            '마늘갈비양념': { qty: 46, price: 18033.87 },
+            'LA갈비양념': { qty: 0, price: 0 }
         },
         chamfresh: {
             '돼지갈비양념': { qty: 0, price: 0 },
-            '마늘갈비양념': { qty: 9, price: 18033.87 }
+            '마늘갈비양념': { qty: 9, price: 18033.87 },
+            'LA갈비양념': { qty: 0, price: 0 }
         },
         youngmeat: {
             '돼지갈비양념': { qty: 0, price: 0 },
-            '마늘갈비양념': { qty: 26, price: 18033.87 }
+            '마늘갈비양념': { qty: 26, price: 18033.87 },
+            'LA갈비양념': { qty: 0, price: 0 }
         }
     };
 
@@ -2256,24 +2572,17 @@ function parseIpgoList(wb) {
         '냉동빽립': '갈비', '냉동볼살(잡육)': '잡육',
         '양념막내장 (국내산)': '막내장',
         '양념깐양 (호주산)': '깐양',
-        // 가공육 (청기와 완제품 입고)
-        '(청기와) (15cm)생갈비': '생갈비(15cm)',
-        '(청기와) (15cm)수원왕갈비': '수원왕갈비(15cm)',
-        '(청기와) 깐양(4kg)(팩)': '깐양',
-        '(청기와) 막내장(4kg)(팩)': '막내장',
-        '(청기와) 양념돼지갈비': '돼지갈비',
-        '(청기와) 잡육(팩)': '잡육',
-        '(청기와) 서울양념왕갈비(8cm)': '서울왕갈비(8cm,양념)',
-        'LA갈비양념매입': '양념LA갈비',
+        // 청기와 완제품 — 가공육 수불부 대상 아님 (외부매입, 투입원가와 무관)
+        // '(청기와) ...' 매핑 제거됨 (2026-04-03)
+        // 소스(양념) 매입
+        'LA갈비양념매입': 'LA갈비양념',
         '청기와돼지갈비양념 매입': '돼지갈비양념'
     };
 
     // 단위 환산: 팩→kg (4kg/팩)
     const unitConvert = {
         '양념막내장 (국내산)': 4, // 팩(4kg) → kg
-        '양념깐양 (호주산)': 4,
-        '(청기와) 깐양(4kg)(팩)': 4,
-        '(청기와) 막내장(4kg)(팩)': 4
+        '양념깐양 (호주산)': 4
     };
 
     for (let r = range.s.r + 1; r <= range.e.r; r++) {
@@ -2294,26 +2603,25 @@ function parseIpgoList(wb) {
         const mapped = codeMap[name.trim()] || name.trim();
 
         const trimmed = name.trim();
-        const category = trimmed.startsWith('(청기와)') || trimmed === 'LA갈비양념매입' ? 'processed'
-            : trimmed === '청기와돼지갈비양념 매입' ? 'sauce' : 'meat';
+        // 청기와 완제품은 가공육 수불부 대상 아님 → skip
+        if (trimmed.startsWith('(청기와)')) continue;
+        const category = (trimmed === '청기와돼지갈비양념 매입' || trimmed === 'LA갈비양념매입') ? 'sauce' : 'meat';
         records.push({ name: mapped, origName: name.trim(), year, month, qty, amt, category });
     }
 
     // 월별 품목별 집계 (카테고리 분리)
     const meatSummary = {};
-    const procSummary = {};
     const sauceSummary = {};
     records.forEach(rec => {
         const key = `${rec.year}-${rec.month}`;
-        const target = rec.category === 'processed' ? procSummary
-            : rec.category === 'sauce' ? sauceSummary : meatSummary;
+        const target = rec.category === 'sauce' ? sauceSummary : meatSummary;
         if (!target[key]) target[key] = {};
         if (!target[key][rec.name]) target[key][rec.name] = { qty: 0, amt: 0 };
         target[key][rec.name].qty += rec.qty;
         target[key][rec.name].amt += rec.amt;
     });
 
-    return { factory: 'ipgo_list', months: meatSummary, procMonths: procSummary, sauceMonths: sauceSummary, records };
+    return { factory: 'ipgo_list', months: meatSummary, sauceMonths: sauceSummary, records };
 }
 
 // ============================================================
@@ -2415,27 +2723,8 @@ function applyAllParsedData() {
     [...workLogs, ...ipgoList].forEach(({ parsed, fileType }) => {
         const months = parsed.months || {};
 
-        // 입고현황: 가공육 별도 처리
-        if (fileType === 'ipgo_list' && parsed.procMonths) {
-            Object.entries(parsed.procMonths).forEach(([key, md]) => {
-                const year = parseInt(key.split('-')[0]);
-                const month = parseInt(key.split('-')[1]);
-                Object.entries(md).forEach(([name, val]) => {
-                    const avgPrice = val.qty > 0 ? val.amt / val.qty : 0;
-                    setSourceData('processed', 'ipgo_list', name, year, month, 'ipgoQty', val.qty);
-                    setSourceData('processed', 'ipgo_list', name, year, month, 'ipgoAmt', val.amt);
-                    PROC_FACTORIES.forEach(fac => {
-                        const d = getItemData('processed', fac, name, year, month);
-                        if (d.ipgoQty > 0 && d.ipgoPrice === 0) {
-                            d.ipgoPrice = avgPrice;
-                            d.ipgoAmt = d.ipgoQty * avgPrice;
-                            calcWeightedAvg(d);
-                            totalApplied++;
-                        }
-                    });
-                });
-            });
-        }
+        // 가공육 입고단가는 투입원가 기반 → 청기와 매핑 제거됨
+        // (calcProcInputCost에서 원육출고금액 × 배분비율로 자동 산출)
         // 입고현황: 소스 제품 별도 처리
         if (fileType === 'ipgo_list' && parsed.sauceMonths) {
             Object.entries(parsed.sauceMonths).forEach(([key, md]) => {
@@ -2562,6 +2851,8 @@ function init() {
     }
     const savedSource = localStorage.getItem('jsyfood_parsed_source');
     if (savedSource) PARSED_SOURCE = JSON.parse(savedSource);
+    const savedMeatAvg = localStorage.getItem('jsyfood_meat_avg');
+    if (savedMeatAvg) MEAT_AVG_PRICES = JSON.parse(savedMeatAvg);
     renderCurrentTab();
     initDropZone();
 }
