@@ -124,24 +124,23 @@
             font-size: 12px;
         }
         thead th {
-            background: var(--white);
-            color: var(--dark-navy);
+            background: var(--dark-navy);
+            color: var(--white);
             padding: 8px 6px;
             text-align: center;
             font-weight: 600;
             white-space: nowrap;
             position: sticky;
             top: 0;
-            border-bottom: 2px solid var(--dark-navy);
+            border-bottom: none;
         }
         thead th.group-header {
-            border-bottom: 3px solid var(--gold);
             font-size: 13px;
         }
-        thead th.col-gicheo { color: var(--blue); }
-        thead th.col-ipgo { color: var(--green); }
-        thead th.col-chulgo { color: var(--red-brown); }
-        thead th.col-gimal { color: var(--dark-navy); }
+        thead th.col-gicheo { color: var(--white); }
+        thead th.col-ipgo { color: var(--white); }
+        thead th.col-chulgo { color: var(--white); }
+        thead th.col-gimal { color: var(--white); }
 
         tbody td {
             padding: 6px 8px;
@@ -1744,20 +1743,19 @@ function buildExcelSheet(category, sections, year, month, st, prevSheetName) {
 
     // 청기와 5색: 기초=청, 입고=녹, 출고=적갈, 기말=남
     const C_GICHEO = '143C73', C_IPGO = '006E32', C_CHULGO = 'CB4427', C_GIMAL = '122437', C_GOLD = 'E2BC54';
-    // 섹션 헤더 스타일
+    // 섹션/컬럼 헤더: 전부 다크네이비 통일 (디자인샘플 기준)
     const secHeaderBase = { font: { name: F, sz: S, bold: true, color: { rgb: 'FFFFFF' } }, numFmt: '#,##0', alignment: { vertical: 'center' } };
     const secHeaderStyle = { ...secHeaderBase, fill: { fgColor: { rgb: C_GIMAL } } };
-    const secHdrGicheo = { ...secHeaderBase, fill: { fgColor: { rgb: C_GICHEO } } };
-    const secHdrIpgo = { ...secHeaderBase, fill: { fgColor: { rgb: C_IPGO } } };
-    const secHdrChulgo = { ...secHeaderBase, fill: { fgColor: { rgb: C_CHULGO } } };
-    const secHdrGimal = { ...secHeaderBase, fill: { fgColor: { rgb: C_GIMAL } } };
-    // 컬럼 헤더 스타일
+    const secHdrGicheo = secHeaderStyle;
+    const secHdrIpgo = secHeaderStyle;
+    const secHdrChulgo = secHeaderStyle;
+    const secHdrGimal = secHeaderStyle;
     const colHeaderBase = { font: { name: F, sz: S, bold: true, color: { rgb: 'FFFFFF' } }, numFmt: '#,##0', alignment: { horizontal: 'center', vertical: 'center' } };
-    const colHdrGicheo = { ...colHeaderBase, fill: { fgColor: { rgb: C_GICHEO } } };
-    const colHdrIpgo = { ...colHeaderBase, fill: { fgColor: { rgb: C_IPGO } } };
-    const colHdrChulgo = { ...colHeaderBase, fill: { fgColor: { rgb: C_CHULGO } } };
-    const colHdrGimal = { ...colHeaderBase, fill: { fgColor: { rgb: C_GIMAL } } };
     const colHeaderStyle = { ...colHeaderBase, fill: { fgColor: { rgb: C_GIMAL } } };
+    const colHdrGicheo = colHeaderStyle;
+    const colHdrIpgo = colHeaderStyle;
+    const colHdrChulgo = colHeaderStyle;
+    const colHdrGimal = colHeaderStyle;
     // 데이터 셀 기본 + 그룹별 폰트 색상
     const dataBase = { font: { name: F, sz: S }, border: thinBorder };
     const dataGicheo = { font: { name: F, sz: S, color: { rgb: C_GICHEO } }, border: thinBorder };
