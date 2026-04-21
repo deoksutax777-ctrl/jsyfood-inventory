@@ -1200,16 +1200,21 @@ function buildProcTable(section, year, month, isTotal) {
         </thead><tbody>`;
 
     let totals = { gichoAmt: 0, ipgoAmt: 0, chulgoAmt: 0, gimalAmt: 0 };
+    let jabykRow = '';
 
     section.items.forEach(item => {
         const d = getItemData('processed', section.key, item.name, year, month);
-        totals.gichoAmt += d.gichoAmt;
-        totals.ipgoAmt += d.ipgoAmt;
-        totals.chulgoAmt += d.chulgoAmt;
-        totals.gimalAmt += d.gimalAmt;
+        const isJabuk = item.name === '잡육';
 
-        if (isTotal) {
-            html += `<tr>
+        if (!isJabuk) {
+            totals.gichoAmt += d.gichoAmt;
+            totals.ipgoAmt += d.ipgoAmt;
+            totals.chulgoAmt += d.chulgoAmt;
+            totals.gimalAmt += d.gimalAmt;
+        }
+
+        const rowHtml = isTotal
+            ? `<tr${isJabuk ? ' style="color:#888;"' : ''}>
                 <td class="item-name">${item.name}</td>
                 <td class="item-unit">${item.unit}</td>
                 <td class="cell-calc cell-gicheo">${fmt(d.gichoQty)}</td>
@@ -1224,10 +1229,8 @@ function buildProcTable(section, year, month, isTotal) {
                 <td class="cell-calc cell-gimal ${d.gimalQty < 0 ? 'cell-negative' : ''}">${fmt(d.gimalQty)}</td>
                 <td class="cell-calc cell-gimal">${fmt(d.gimalPrice)}</td>
                 <td class="cell-calc cell-gimal">${fmtAmt(d.gimalAmt)}</td>
-            </tr>`;
-        } else {
-            // 공장별: 입고수량=입력가능, 입고단가=투입원가 자동(읽기전용), 출고수량=입력가능
-            html += `<tr>
+            </tr>`
+            : `<tr${isJabuk ? ' style="color:#888;"' : ''}>
                 <td class="item-name">${item.name}</td>
                 <td class="item-unit">${item.unit}</td>
                 <td class="cell-calc cell-gicheo">${fmt(d.gichoQty)}</td>
@@ -1245,7 +1248,9 @@ function buildProcTable(section, year, month, isTotal) {
                 <td class="cell-calc cell-gimal">${fmt(d.gimalPrice)}</td>
                 <td class="cell-calc cell-gimal">${fmtAmt(d.gimalAmt)}</td>
             </tr>`;
-        }
+
+        if (isJabuk) jabykRow = rowHtml;
+        else html += rowHtml;
     });
 
     html += `<tr class="total-row">
@@ -1255,6 +1260,7 @@ function buildProcTable(section, year, month, isTotal) {
         <td></td><td></td><td class="cell-calc">${fmtAmt(totals.chulgoAmt)}</td>
         <td></td><td></td><td class="cell-calc">${fmtAmt(totals.gimalAmt)}</td>
     </tr>`;
+    html += jabykRow;
 
     html += '</tbody></table></div>';
     return html;
@@ -2021,58 +2027,47 @@ function buildExcelSheet(category, sections, year, month, st, prevSheetName) {
         r++;
 
         const dataStartRow = r;
+        // 가공육: 잡육은 합계 아래에 별도 표기 (합계 미포함)
+        const jabukItem = category === 'processed' ? sec.items.find(i => i.name === '잡육') : null;
+        const mainItems = jabukItem ? sec.items.filter(i => i.name !== '잡육') : sec.items;
 
-        sec.items.forEach(item => {
+        function writeItemRow(item, grayStyle) {
             const d = getItemData(category, sec.key, item.name, year, month);
-            const R = r + 1; // 1-indexed
-
+            const R = r + 1;
+            const dG = grayStyle ? { ...dataBase, font: { name: F, sz: S, color: { rgb: 'AAAAAA' } } } : null;
             cell(r, 0, '', dataBase);
-            cell(r, 1, item.name, { ...dataBase, font: { name: F, sz: S } });
-            cell(r, 2, item.unit, { ...dataBase, alignment: { horizontal: 'center' } });
+            cell(r, 1, item.name, dG || { ...dataBase, font: { name: F, sz: S } });
+            cell(r, 2, item.unit, dG || { ...dataBase, alignment: { horizontal: 'center' } });
 
-            // D: 기초수량 (2월~: 전월 기말 참조)
             if (prevSheetName) {
-                cell(r, 3, { f: `'${prevSheetName}'!M${R}` }, { ...dataGicheo, numFmt: FMT_QTY });
+                cell(r, 3, { f: `'${prevSheetName}'!M${R}` }, dG || { ...dataGicheo, numFmt: FMT_QTY });
             } else {
-                cell(r, 3, d.gichoQty, { ...dataGicheo, numFmt: FMT_QTY });
+                cell(r, 3, d.gichoQty, dG || { ...dataGicheo, numFmt: FMT_QTY });
             }
-            // E: 기초단가 = ROUNDDOWN(IFERROR(F/D,0),2)
-            cell(r, 4, { f: `ROUNDDOWN(IFERROR(F${R}/D${R},0),2)` }, { ...dataGicheo, numFmt: FMT_AMT });
-            // F: 기초금액 (2월~: 전월 기말금액 참조)
+            cell(r, 4, { f: `ROUNDDOWN(IFERROR(F${R}/D${R},0),2)` }, dG || { ...dataGicheo, numFmt: FMT_AMT });
             if (prevSheetName) {
-                cell(r, 5, { f: `'${prevSheetName}'!O${R}` }, { ...dataGicheo, numFmt: FMT_AMT });
+                cell(r, 5, { f: `'${prevSheetName}'!O${R}` }, dG || { ...dataGicheo, numFmt: FMT_AMT });
             } else {
-                cell(r, 5, d.gichoAmt, { ...dataGicheo, numFmt: FMT_AMT });
+                cell(r, 5, d.gichoAmt, dG || { ...dataGicheo, numFmt: FMT_AMT });
             }
-
-            // G: 입고수량
-            cell(r, 6, d.ipgoQty, { ...dataIpgo, numFmt: FMT_QTY });
-            // H: 입고단가 = IFERROR(I/G,0)
-            cell(r, 7, { f: `IFERROR(I${R}/G${R},0)` }, { ...dataIpgo, numFmt: FMT_AMT });
-            // I: 입고금액
-            cell(r, 8, d.ipgoQty * d.ipgoPrice, { ...dataIpgo, numFmt: FMT_AMT });
-
-            // J: 출고수량
-            cell(r, 9, d.chulgoQty, { ...dataChulgo, numFmt: FMT_QTY });
-            // K: 출고단가 = 총평균 = IFERROR((F+I)/(D+G),0)
-            cell(r, 10, { f: `IFERROR((F${R}+I${R})/(D${R}+G${R}),0)` }, { ...dataChulgo, numFmt: FMT_AMT });
-            // L: 출고금액 = J*K
-            cell(r, 11, { f: `J${R}*K${R}` }, { ...dataChulgo, numFmt: FMT_AMT });
-
-            // M: 기말수량 = D+G-J
-            cell(r, 12, { f: `D${R}+G${R}-J${R}` }, { ...dataGimal, numFmt: FMT_QTY });
-            // N: 기말단가 = IFERROR(O/M,0)
-            cell(r, 13, { f: `IFERROR(O${R}/M${R},0)` }, { ...dataGimal, numFmt: FMT_AMT });
-            // O: 기말금액 = F+I-L (기초금액+입고금액-출고금액)
-            cell(r, 14, { f: `F${R}+I${R}-L${R}` }, { ...dataGimal, numFmt: FMT_AMT });
-
+            cell(r, 6, d.ipgoQty, dG || { ...dataIpgo, numFmt: FMT_QTY });
+            cell(r, 7, { f: `IFERROR(I${R}/G${R},0)` }, dG || { ...dataIpgo, numFmt: FMT_AMT });
+            cell(r, 8, d.ipgoQty * d.ipgoPrice, dG || { ...dataIpgo, numFmt: FMT_AMT });
+            cell(r, 9, d.chulgoQty, dG || { ...dataChulgo, numFmt: FMT_QTY });
+            cell(r, 10, { f: `IFERROR((F${R}+I${R})/(D${R}+G${R}),0)` }, dG || { ...dataChulgo, numFmt: FMT_AMT });
+            cell(r, 11, { f: `J${R}*K${R}` }, dG || { ...dataChulgo, numFmt: FMT_AMT });
+            cell(r, 12, { f: `D${R}+G${R}-J${R}` }, dG || { ...dataGimal, numFmt: FMT_QTY });
+            cell(r, 13, { f: `IFERROR(O${R}/M${R},0)` }, dG || { ...dataGimal, numFmt: FMT_AMT });
+            cell(r, 14, { f: `F${R}+I${R}-L${R}` }, dG || { ...dataGimal, numFmt: FMT_AMT });
             r++;
-        });
+        }
+
+        mainItems.forEach(item => writeItemRow(item, false));
 
         const dataEndRow = r;
         const TR = r + 1;
 
-        // 합계행
+        // 합계행 (잡육 제외 범위)
         cell(r, 0, '', totStyle);
         cell(r, 1, '합계', { ...totStyle, font: { name: F, sz: S, bold: true } });
         cell(r, 2, '', totStyle);
@@ -2088,7 +2083,12 @@ function buildExcelSheet(category, sections, year, month, st, prevSheetName) {
         cell(r, 12, { f: `SUM(M${dataStartRow+1}:M${dataEndRow})` }, { ...totGimal, numFmt: FMT_QTY });
         cell(r, 13, { f: `ROUNDDOWN(IFERROR(O${TR}/M${TR},0),2)` }, { ...totGimal, numFmt: FMT_AMT });
         cell(r, 14, { f: `SUM(O${dataStartRow+1}:O${dataEndRow})` }, { ...totGimal, numFmt: FMT_AMT });
-        r += 2;
+        r++;
+
+        // 잡육: 합계 아래 별도 행 (회색)
+        if (jabukItem) writeItemRow(jabukItem, true);
+
+        r++; // 섹션 간격
     });
 
     ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: r - 1, c: 14 } });
