@@ -511,6 +511,31 @@ let MEAT_AVG_PRICES = {};
 // }
 let PROC_INPUT_COSTS = {};
 
+// 가공육 거점간 이동 저장소
+// PROC_TRANSFERS[ymKey] = [{date, from, to, item, qty, price?, amt?, source: 'remarks'|'manual', sourceText, confidence}]
+let PROC_TRANSFERS = {};
+
+// 거점간 이동 비고 파싱용 거점 사전 (whitelist)
+const TRANSFER_FACTORY_DICT = {
+    '인천': 'incheon', '인천공장': 'incheon', 'JSY': 'incheon', '제이에스와이': 'incheon',
+    '참프레시': 'chamfresh', '참프': 'chamfresh',
+    '영미트': 'youngmeat',
+    '본푸드': 'bonfood', '샤인': 'shine'
+};
+
+function addProcTransfer(year, month, transfer) {
+    const key = getDataKey(year, month);
+    if (!PROC_TRANSFERS[key]) PROC_TRANSFERS[key] = [];
+    // 중복 방지 (date+from+to+item+qty+source)
+    const dup = PROC_TRANSFERS[key].find(t =>
+        t.date === transfer.date && t.from === transfer.from && t.to === transfer.to &&
+        t.item === transfer.item && t.qty === transfer.qty && t.source === transfer.source
+    );
+    if (dup) return false;
+    PROC_TRANSFERS[key].push(transfer);
+    return true;
+}
+
 function getMeatAvgPrice(itemName, year, month) {
     const key = getDataKey(year, month);
     return MEAT_AVG_PRICES?.[key]?.[itemName]?.avgPrice || 0;
@@ -527,7 +552,7 @@ function setSourceData(category, factory, itemName, year, month, field, value) {
     if (!PARSED_SOURCE[category][factory]) PARSED_SOURCE[category][factory] = {};
     if (!PARSED_SOURCE[category][factory][key]) PARSED_SOURCE[category][factory][key] = {};
     if (!PARSED_SOURCE[category][factory][key][itemName]) {
-        PARSED_SOURCE[category][factory][key][itemName] = { ipgoQty: 0, chulgoQty: 0, ipgoAmt: 0 };
+        PARSED_SOURCE[category][factory][key][itemName] = { ipgoQty: 0, chulgoQty: 0, ipgoAmt: 0, storeQty: 0, bonfoodQty: 0, shineQty: 0, etcQty: 0 };
     }
     PARSED_SOURCE[category][factory][key][itemName][field] = value;
 }
@@ -663,6 +688,48 @@ function calcProcInputCost(year, month) {
 
             PROC_INPUT_COSTS[ymKey][fac][productName] = cost;
         });
+    });
+}
+
+// ============================================================
+// 가공육 거점간 이동 적용 (rollback / apply)
+// ipgoQty/ipgoAmt에 이동분을 누적하되, 재계산 시 이전 추가분을 먼저 롤백해
+// 멱등성(idempotent) 보장. _transferIpgoQty/_transferIpgoAmt 필드로 추적.
+// ============================================================
+function rollbackProcTransfers(year, month) {
+    PROC_FACTORIES.forEach(fac => {
+        PROC_ITEMS.forEach(item => {
+            const d = getItemData('processed', fac, item.name, year, month);
+            if (d._transferIpgoQty) { d.ipgoQty -= d._transferIpgoQty; d._transferIpgoQty = 0; }
+            if (d._transferIpgoAmt) { d.ipgoAmt -= d._transferIpgoAmt; d._transferIpgoAmt = 0; }
+            if (d.ipgoQty < 0) d.ipgoQty = 0;
+            if (d.ipgoAmt < 0) d.ipgoAmt = 0;
+        });
+    });
+}
+
+function applyProcTransfers(year, month, passOnePrices) {
+    const ymKey = getDataKey(year, month);
+    const transfers = PROC_TRANSFERS[ymKey] || [];
+    transfers.forEach(t => {
+        // 외부거점(본푸드/샤인)으로의 이동은 to-side 미생성 (수불부 제외 거점)
+        if (!PROC_FACTORIES.includes(t.to)) { t.price = 0; t.amt = 0; return; }
+        // from 거점도 내부거점이어야 함
+        if (!PROC_FACTORIES.includes(t.from)) { t.price = 0; t.amt = 0; return; }
+        // 품목 존재 확인
+        if (!PROC_ITEMS.some(i => i.name === t.item)) { t.price = 0; t.amt = 0; return; }
+        const fromPrice = passOnePrices?.[t.from]?.[t.item] || 0;
+        const amt = t.qty * fromPrice;
+        const d = getItemData('processed', t.to, t.item, year, month);
+        d._transferIpgoQty = (d._transferIpgoQty || 0) + t.qty;
+        d._transferIpgoAmt = (d._transferIpgoAmt || 0) + amt;
+        d.ipgoQty += t.qty;
+        d.ipgoAmt += amt;
+        // 블렌드 입고단가 재설정 (자체생산 + 이동수령 가중평균)
+        // calcWeightedAvg가 ipgoAmt = ipgoQty × ipgoPrice 로 재계산하므로 단가를 맞춰둠
+        d.ipgoPrice = d.ipgoQty > 0 ? d.ipgoAmt / d.ipgoQty : 0;
+        t.price = fromPrice;
+        t.amt = amt;
     });
 }
 
@@ -1034,8 +1101,25 @@ function buildMeatTable(section, year, month, isTotal) {
 function calcProcTotals(year, month) {
     // 원육 먼저 계산 (투입원가의 원천)
     calcMeatTotals(year, month);
+    // 거점간이동 이전 적용분 롤백 (멱등성)
+    rollbackProcTransfers(year, month);
     // 투입원가 산출 (원육출고금액 × 배분비율 → 가공육 입고단가)
     calcProcInputCost(year, month);
+
+    // === 1차 패스: 거점간이동 무시 상태로 각 거점 임시 총평균(출고)단가 산출 ===
+    const passOnePrices = {};
+    PROC_FACTORIES.forEach(fac => {
+        passOnePrices[fac] = {};
+        PROC_ITEMS.forEach(item => {
+            linkGicho('processed', fac, item.name, year, month);
+            const d = getItemData('processed', fac, item.name, year, month);
+            calcWeightedAvg(d);
+            passOnePrices[fac][item.name] = d.chulgoPrice;
+        });
+    });
+
+    // === 거점간 이동 적용 ===
+    applyProcTransfers(year, month, passOnePrices);
 
     PROC_ITEMS.forEach(item => {
         const total = getItemData('processed', 'total', item.name, year, month);
@@ -1550,7 +1634,9 @@ function renderVerification() {
                 hasData = true;
 
                 const d = getItemData(category, fac, item.name, year, month);
-                const ipgoMatch = Math.abs((src.ipgoQty || 0) - d.ipgoQty) < 0.01;
+                // 가공육은 거점간이동 추가분(_transferIpgoQty)을 제외한 자체 입고만 비교
+                const dIpgoForCmp = d.ipgoQty - (d._transferIpgoQty || 0);
+                const ipgoMatch = Math.abs((src.ipgoQty || 0) - dIpgoForCmp) < 0.01;
                 const chulgoMatch = Math.abs((src.chulgoQty || 0) - d.chulgoQty) < 0.01;
                 if (!ipgoMatch || !chulgoMatch) allMatch = false;
 
@@ -1558,7 +1644,7 @@ function renderVerification() {
                     <td>${item.name}</td>
                     <td style="text-align:center">${factoryLabels[fac] || fac}</td>
                     <td>${fmt(src.ipgoQty || 0)}</td>
-                    <td>${fmt(d.ipgoQty)}</td>
+                    <td>${fmt(dIpgoForCmp)}${(d._transferIpgoQty||0) > 0 ? ` <span style="color:var(--gold);font-size:10px;">(+이동${fmt(d._transferIpgoQty)})</span>` : ''}</td>
                     <td class="${ipgoMatch ? 'verify-true' : 'verify-false'}">${ipgoMatch ? 'TRUE' : 'FALSE'}</td>
                     <td>${fmt(src.chulgoQty || 0)}</td>
                     <td>${fmt(d.chulgoQty)}</td>
@@ -1620,6 +1706,9 @@ function renderVerification() {
     const sauceSections = [{ key: 'raw', items: SAUCE_ITEMS.raw }];
     html += buildVerifyTable('소스 (원재료)', 'sauce', ['raw'], sauceFacLabels, SAUCE_ITEMS.raw, false);
 
+    // === 가공육 거점간 이동 검증 섹션 ===
+    html += buildTransferVerifySection(year, month, facLabels);
+
     panel.innerHTML = html;
 
     // 요약 배지
@@ -1631,6 +1720,147 @@ function renderVerification() {
     } else {
         badge.innerHTML = '<span class="verify-summary fail">MISMATCH</span>';
     }
+}
+
+// ============================================================
+// 거점간 이동 검증 + 보정 UI
+// ============================================================
+function buildTransferVerifySection(year, month, facLabels) {
+    const ymKey = getDataKey(year, month);
+    const transfers = PROC_TRANSFERS[ymKey] || [];
+
+    // 잔차1: 음수 기말 (미해소된 부족분)
+    const negatives = [];
+    PROC_FACTORIES.forEach(fac => {
+        PROC_ITEMS.forEach(item => {
+            const d = getItemData('processed', fac, item.name, year, month);
+            if (d.gimalQty < -0.01) {
+                negatives.push({ fac, item: item.name, gimal: d.gimalQty, ipgo: d.ipgoQty, chulgo: d.chulgoQty });
+            }
+        });
+    });
+
+    // 잔차2: from-side "기타" 합 vs PROC_TRANSFERS의 from합 (품목별)
+    const etcDiscrepancies = [];
+    PROC_FACTORIES.forEach(fac => {
+        PROC_ITEMS.forEach(item => {
+            const src = getSourceData('processed', fac, item.name, year, month);
+            if (!src || !src.etcQty) return;
+            const transferOutSum = transfers
+                .filter(t => t.from === fac && t.item === item.name)
+                .reduce((s, t) => s + t.qty, 0);
+            const diff = (src.etcQty || 0) - transferOutSum;
+            if (Math.abs(diff) > 0.01) {
+                etcDiscrepancies.push({ fac, item: item.name, etc: src.etcQty, transferOut: transferOutSum, diff });
+            }
+        });
+    });
+
+    let html = `<div class="verify-section"><h3>가공육 거점간 이동 (${transfers.length}건)</h3>`;
+
+    // 추출된 이동 목록
+    if (transfers.length === 0) {
+        html += `<div style="padding:12px;color:#999;text-align:center;">추출된 거점간 이동 없음 — 인천 작업일지 비고란 확인 필요</div>`;
+    } else {
+        html += `<div class="table-wrap"><table class="verify-table"><thead><tr>
+            <th>날짜</th><th>From</th><th>To</th><th>품목</th><th>수량</th><th>단가</th><th>금액</th><th>출처</th><th></th>
+        </tr></thead><tbody>`;
+        transfers.forEach((t, idx) => {
+            const fromLbl = facLabels[t.from] || t.from;
+            const toLbl = facLabels[t.to] || t.to;
+            const isExternal = !PROC_FACTORIES.includes(t.to);
+            html += `<tr ${isExternal ? 'style="color:#999;"' : ''}>
+                <td>${t.date}</td>
+                <td>${fromLbl}</td>
+                <td>${toLbl}${isExternal ? ' (외부)' : ''}</td>
+                <td>${t.item}</td>
+                <td>${fmt(t.qty)}</td>
+                <td>${fmt(t.price || 0)}</td>
+                <td>${fmtAmt(t.amt || 0)}</td>
+                <td style="font-size:10px;color:#888;" title="${(t.sourceText || '').replace(/"/g,'&quot;')}">${t.source}</td>
+                <td><button onclick="removeProcTransfer('${ymKey}',${idx})" style="font-size:10px;padding:2px 6px;cursor:pointer;">삭제</button></td>
+            </tr>`;
+        });
+        html += `</tbody></table></div>`;
+    }
+
+    // 잔차1: 음수 기말
+    if (negatives.length > 0) {
+        html += `<div style="margin-top:12px;"><strong style="color:#CB4427;">⚠ 음수 기말 (이동 입고 부족 ${negatives.length}건)</strong>
+            <div class="table-wrap"><table class="verify-table"><thead><tr>
+            <th>거점</th><th>품목</th><th>입고</th><th>출고</th><th>기말</th>
+            </tr></thead><tbody>`;
+        negatives.forEach(n => {
+            html += `<tr><td>${facLabels[n.fac] || n.fac}</td><td>${n.item}</td>
+                <td>${fmt(n.ipgo)}</td><td>${fmt(n.chulgo)}</td>
+                <td class="verify-false">${fmt(n.gimal)}</td></tr>`;
+        });
+        html += `</tbody></table></div></div>`;
+    }
+
+    // 잔차2: 기타 출고 vs 이동 합 불일치
+    if (etcDiscrepancies.length > 0) {
+        html += `<div style="margin-top:12px;"><strong style="color:#CB4427;">⚠ "기타" 출고 vs 이동 합 불일치 (${etcDiscrepancies.length}건)</strong>
+            <div class="table-wrap"><table class="verify-table"><thead><tr>
+            <th>거점</th><th>품목</th><th>기타출고</th><th>이동합</th><th>잔차</th>
+            </tr></thead><tbody>`;
+        etcDiscrepancies.forEach(e => {
+            html += `<tr><td>${facLabels[e.fac] || e.fac}</td><td>${e.item}</td>
+                <td>${fmt(e.etc)}</td><td>${fmt(e.transferOut)}</td>
+                <td class="verify-false">${fmt(e.diff)}</td></tr>`;
+        });
+        html += `</tbody></table></div></div>`;
+    }
+
+    // 수동 보정 입력 폼
+    const procItemOpts = PROC_ITEMS.map(i => `<option value="${i.name}">${i.name}</option>`).join('');
+    const facOpts = PROC_FACTORIES.map(f => `<option value="${f}">${facLabels[f] || f}</option>`).join('');
+    html += `<div style="margin-top:12px;padding:10px;background:#f8fbff;border:1px solid #e0e6ef;border-radius:6px;">
+        <strong>거점간 이동 수동 추가 (${year}년 ${month}월)</strong>
+        <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;align-items:center;">
+            <input type="date" id="trDate" value="${year}-${String(month).padStart(2,'0')}-15" style="padding:4px;">
+            <select id="trFrom" style="padding:4px;">${facOpts}</select>
+            <span>→</span>
+            <select id="trTo" style="padding:4px;">${facOpts}</select>
+            <select id="trItem" style="padding:4px;">${procItemOpts}</select>
+            <input type="number" id="trQty" placeholder="수량" style="padding:4px;width:80px;">
+            <button onclick="addManualTransfer(${year},${month})" style="padding:4px 12px;background:var(--dark-navy);color:#fff;border:none;cursor:pointer;">추가</button>
+        </div>
+    </div></div>`;
+    return html;
+}
+
+function addManualTransfer(year, month) {
+    const date = document.getElementById('trDate').value;
+    const from = document.getElementById('trFrom').value;
+    const to = document.getElementById('trTo').value;
+    const item = document.getElementById('trItem').value;
+    const qty = parseFloat(document.getElementById('trQty').value);
+    if (!date || !from || !to || !item || !qty || qty <= 0) {
+        alert('모든 필드를 입력하세요'); return;
+    }
+    if (from === to) { alert('From과 To가 같습니다'); return; }
+    const key = getDataKey(year, month);
+    if (!PROC_TRANSFERS[key]) PROC_TRANSFERS[key] = [];
+    PROC_TRANSFERS[key].push({
+        date, from, to, item, qty,
+        source: 'manual', sourceText: '수동입력', confidence: 'high',
+        _year: year, _month: month
+    });
+    calcProcTotals(year, month);
+    renderCurrentTab();
+    renderVerification();
+}
+
+function removeProcTransfer(ymKey, idx) {
+    if (!confirm('이 거점간 이동을 삭제하시겠습니까?')) return;
+    if (!PROC_TRANSFERS[ymKey]) return;
+    PROC_TRANSFERS[ymKey].splice(idx, 1);
+    const year = parseInt(ymKey.substring(0, 4));
+    const month = parseInt(ymKey.substring(4, 6));
+    calcProcTotals(year, month);
+    renderCurrentTab();
+    renderVerification();
 }
 
 // ============================================================
@@ -1647,6 +1877,7 @@ function saveData() {
     localStorage.setItem('jsyfood_inventory', JSON.stringify(DATA));
     localStorage.setItem('jsyfood_parsed_source', JSON.stringify(PARSED_SOURCE));
     localStorage.setItem('jsyfood_meat_avg', JSON.stringify(MEAT_AVG_PRICES));
+    localStorage.setItem('jsyfood_proc_transfers', JSON.stringify(PROC_TRANSFERS));
     alert('저장 완료');
 }
 
@@ -1658,6 +1889,8 @@ function loadSavedData() {
         if (savedSource) PARSED_SOURCE = JSON.parse(savedSource);
         const savedMeatAvg = localStorage.getItem('jsyfood_meat_avg');
         if (savedMeatAvg) MEAT_AVG_PRICES = JSON.parse(savedMeatAvg);
+        const savedTransfers = localStorage.getItem('jsyfood_proc_transfers');
+        if (savedTransfers) PROC_TRANSFERS = JSON.parse(savedTransfers);
         renderCurrentTab();
         alert('불러오기 완료');
     } else {
@@ -2236,14 +2469,103 @@ function buildMeatAvgPriceSheet(year, month) {
 
 function downloadProcessedExcel(year, month) {
     const wb = buildMultiSheetWb('processed', PROC_SECTIONS, year, month, 20, calcProcTotals);
-    const facLabels = { incheon: '인천공장', chamfresh: '참프레시', youngmeat: '영미트' };
+    const facLabels = { incheon: '인천공장', chamfresh: '참프레시', youngmeat: '영미트', bonfood: '본푸드', shine: '샤인' };
     const vs = buildVerificationSheet('processed', PROC_SECTIONS, PROC_FACTORIES, facLabels, PROC_ITEMS, year, month, false);
     XLSX.utils.book_append_sheet(wb, vs, '검증');
     // 수율분석 시트
     const ys = buildYieldAnalysisSheet(year, month);
     XLSX.utils.book_append_sheet(wb, ys, '수율분석');
+    // 거점간이동 시트
+    const ts = buildTransferSheet(year, month, facLabels);
+    XLSX.utils.book_append_sheet(wb, ts, '거점간이동');
     const ym = `${year % 100}${String(month).padStart(2, '0')}`;
     writeFileNoGrid(wb, `재고수불부_가공육_${ym}.xlsx`);
+}
+
+// ============================================================
+// 거점간이동 엑셀 시트 (25년 전담당자 공장간이동 형식)
+// ============================================================
+function buildTransferSheet(year, month, facLabels) {
+    const ws = {};
+    const F = XL_FONT, S = XL_SZ;
+    const thinBorder = { top:{style:'thin',color:{rgb:'CCCCCC'}}, bottom:{style:'thin',color:{rgb:'CCCCCC'}}, left:{style:'thin',color:{rgb:'CCCCCC'}}, right:{style:'thin',color:{rgb:'CCCCCC'}} };
+
+    function cell(row, col, val, style) {
+        const ref = XLSX.utils.encode_cell({ r: row, c: col });
+        if (typeof val === 'object' && val !== null && val.f) {
+            ws[ref] = { t: 'n', f: val.f, s: style };
+        } else if (typeof val === 'number') {
+            ws[ref] = { t: 'n', v: val, s: style };
+        } else {
+            ws[ref] = { t: 's', v: val == null ? '' : String(val), s: style };
+        }
+    }
+
+    const titleStyle = { font: { name: F, bold: true, sz: 14, color: { rgb: '143C73' } }, alignment: { horizontal: 'left', vertical: 'center' } };
+    const subtitleStyle = { font: { name: F, sz: 10, color: { rgb: '888888' } }, alignment: { horizontal: 'left', vertical: 'center' } };
+    const hdrStyle = { font: { name: F, bold: true, sz: S, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '122437' } }, alignment: { horizontal: 'center', vertical: 'center' }, border: thinBorder };
+    const fromStyle = { font: { name: F, sz: S, color: { rgb: 'CB4427' }, bold: true }, alignment: { horizontal: 'center', vertical: 'center' }, border: thinBorder };
+    const toStyle = { font: { name: F, sz: S, color: { rgb: '006E32' }, bold: true }, alignment: { horizontal: 'center', vertical: 'center' }, border: thinBorder };
+    const textStyle = { font: { name: F, sz: S }, alignment: { horizontal: 'left', vertical: 'center' }, border: thinBorder };
+    const numStyle = { font: { name: F, sz: S }, alignment: { horizontal: 'right', vertical: 'center' }, border: thinBorder, numFmt: '#,##0.00' };
+    const amtStyle = { font: { name: F, sz: S, color: { rgb: 'B8860B' }, bold: true }, alignment: { horizontal: 'right', vertical: 'center' }, border: thinBorder, numFmt: '#,##0' };
+    const totalStyle = { font: { name: F, bold: true, sz: S, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '143C73' } }, alignment: { horizontal: 'right', vertical: 'center' }, border: thinBorder, numFmt: '#,##0' };
+    const totalLabelStyle = { font: { name: F, bold: true, sz: S, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '143C73' } }, alignment: { horizontal: 'center', vertical: 'center' }, border: thinBorder };
+
+    let r = 0;
+    cell(r, 0, `${year}년 ${month}월 가공육 거점간 이동 내역`, titleStyle);
+    r++;
+    cell(r, 0, 'From 거점의 월 총평균단가 적용 · 외부거점(본푸드/샤인) 이동은 to-side 미생성', subtitleStyle);
+    r += 2;
+
+    // 헤더
+    const headers = ['날짜', 'From', 'To', '품목', '수량', 'From단가', '금액', '출처'];
+    headers.forEach((h, i) => cell(r, i, h, hdrStyle));
+    r++;
+
+    const ymKey = getDataKey(year, month);
+    const transfers = (PROC_TRANSFERS[ymKey] || []).slice().sort((a, b) => {
+        if (a.item !== b.item) return a.item.localeCompare(b.item);
+        return (a.date || '').localeCompare(b.date || '');
+    });
+
+    let totalAmt = 0, totalQty = 0;
+    if (transfers.length === 0) {
+        cell(r, 0, '추출된 거점간 이동 없음', subtitleStyle);
+        r++;
+    } else {
+        transfers.forEach(t => {
+            const fromLbl = facLabels[t.from] || t.from;
+            const toLbl = facLabels[t.to] || t.to;
+            const isExternal = !PROC_FACTORIES.includes(t.to);
+            cell(r, 0, t.date || '', textStyle);
+            cell(r, 1, fromLbl, fromStyle);
+            cell(r, 2, toLbl + (isExternal ? ' (외부)' : ''), toStyle);
+            cell(r, 3, t.item, textStyle);
+            cell(r, 4, t.qty || 0, numStyle);
+            cell(r, 5, t.price || 0, numStyle);
+            cell(r, 6, t.amt || 0, amtStyle);
+            cell(r, 7, t.source || '', textStyle);
+            totalQty += (t.qty || 0);
+            totalAmt += (t.amt || 0);
+            r++;
+        });
+
+        // 합계
+        cell(r, 0, '합계', totalLabelStyle);
+        cell(r, 1, '', totalLabelStyle);
+        cell(r, 2, '', totalLabelStyle);
+        cell(r, 3, '', totalLabelStyle);
+        cell(r, 4, totalQty, totalStyle);
+        cell(r, 5, '', totalLabelStyle);
+        cell(r, 6, totalAmt, totalStyle);
+        cell(r, 7, '', totalLabelStyle);
+        r++;
+    }
+
+    ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(r, 5), c: 7 } });
+    ws['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 22 }, { wch: 10 }, { wch: 12 }, { wch: 14 }, { wch: 10 }];
+    return ws;
 }
 
 // ============================================================
@@ -2586,8 +2908,15 @@ const NAME_MAP = {
 };
 
 function normalizeName(raw) {
-    const clean = raw.replace(/\n.*/s, '').trim();
-    return NAME_MAP[clean] || clean;
+    const lines = raw.split('\n').map(s => s.trim()).filter(Boolean);
+    const firstLine = lines[0] || '';
+    // "돼지갈비\n(동그랑땡)\n..." 처럼 두 번째 줄이 순수 괄호 분류인 경우 이름에 합산
+    if (lines.length > 1 && /^\([^)]+\)$/.test(lines[1])) {
+        const candidate = firstLine + lines[1];
+        if (NAME_MAP[candidate]) return NAME_MAP[candidate];
+        if (!NAME_MAP[firstLine]) return candidate;
+    }
+    return NAME_MAP[firstLine] || firstLine;
 }
 
 // 시트명 → 연도/월 파싱
@@ -2685,14 +3014,120 @@ function parseWorklogSheet(ws) {
         if (currentItem && currentTarget && dVal) {
             if (dVal === '입고') currentTarget[currentItem].ipgo = eVal;
             if (dVal === '출고') currentTarget[currentItem].chulgo = eVal;
+            // 출고 분해: 매장/본푸드/샤인/기타 (가공육 거점간이동 검증용)
+            if (dVal === '매장') currentTarget[currentItem].store = eVal;
+            if (dVal === '본푸드') currentTarget[currentItem].bonfood = eVal;
+            if (dVal === '샤인') currentTarget[currentItem].shine = eVal;
+            if (dVal === '기타') currentTarget[currentItem].etc = eVal;
             if (dVal === '기말') {
                 currentTarget[currentItem].gimal = eVal;
+                // 출고 분해 합계 검증 (매장+본푸드+샤인+기타 == 출고)
+                const it = currentTarget[currentItem];
+                const subSum = (it.store || 0) + (it.bonfood || 0) + (it.shine || 0) + (it.etc || 0);
+                const chulgo = it.chulgo || 0;
+                if (subSum > 0 && Math.abs(subSum - chulgo) > 0.01) {
+                    console.warn(`[parseWorklogSheet] 출고 분해 불일치: ${currentItem} 출고=${chulgo}, 분해합=${subSum} (매장${it.store||0}+본푸드${it.bonfood||0}+샤인${it.shine||0}+기타${it.etc||0})`);
+                }
                 currentItem = null; // 품목 완료
             }
         }
     }
 
     return { meat: meatResult, proc: procResult };
+}
+
+// ============================================================
+// 가공육 거점간 이동 비고 파서
+// ============================================================
+function correctTransferMonth(remarkMonth, sheetYear, sheetMonth) {
+    // 시트 월 경계 보정 (예: 2603 시트의 "2/26" → 2602로)
+    let year = sheetYear;
+    if (remarkMonth > sheetMonth + 6) year = sheetYear - 1;       // 1월시트의 12월 비고
+    else if (remarkMonth < sheetMonth - 6) year = sheetYear + 1;  // 12월시트의 1월 비고
+    return { year, month: remarkMonth };
+}
+
+function buildTransferRecord(year, month, day, from, to, item, qty, sourceText) {
+    const date = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    return {
+        date, from, to, item, qty,
+        source: 'remarks', sourceText, confidence: 'high',
+        _year: year, _month: month
+    };
+}
+
+function extractTransfersFromRemark(text, rowLabel, item, reporterFactoryKey, sheetYear, sheetMonth) {
+    const results = [];
+    if (!text) return results;
+    const segments = text.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+    for (const seg of segments) {
+        // 화살표 패턴: [M/D] A→B 100팩 이관
+        const arrow = seg.match(/(?:(\d{1,2})\/(\d{1,2})\s*)?([가-힣A-Za-z]+)\s*(?:->|→|⇒)\s*([가-힣A-Za-z]+)\s*(\d+)\s*(?:대|팩|박스|kg)?\s*(이관|이동)?/);
+        if (arrow) {
+            const fromKey = TRANSFER_FACTORY_DICT[arrow[3]];
+            const toKey = TRANSFER_FACTORY_DICT[arrow[4]];
+            if (fromKey && toKey) {
+                const m = arrow[1] ? parseInt(arrow[1]) : sheetMonth;
+                const d = arrow[2] ? parseInt(arrow[2]) : 1;
+                const corrected = correctTransferMonth(m, sheetYear, sheetMonth);
+                results.push(buildTransferRecord(corrected.year, corrected.month, d, fromKey, toKey, item, parseInt(arrow[5]), seg));
+                continue;
+            }
+        }
+        // 일반 패턴: M/D 거점 수량(단위) 입고|출고|이관|이동
+        const m = seg.match(/(\d{1,2})\/(\d{1,2})\s*([가-힣A-Za-z]+)[^\d]*(\d+)\s*(?:대|팩|박스|kg)?\s*(입고|출고|이관|이동)/);
+        if (m) {
+            const month = parseInt(m[1]);
+            const day = parseInt(m[2]);
+            const otherKey = TRANSFER_FACTORY_DICT[m[3]];
+            if (!otherKey) continue;  // whitelist 외 (매장 거래처 등)
+            const qty = parseInt(m[4]);
+            const action = m[5];
+            let from, to;
+            if (action === '입고') { from = otherKey; to = reporterFactoryKey; }
+            else { from = reporterFactoryKey; to = otherKey; }
+            if (from === to) continue;
+            const corrected = correctTransferMonth(month, sheetYear, sheetMonth);
+            results.push(buildTransferRecord(corrected.year, corrected.month, day, from, to, item, qty, seg));
+        }
+    }
+    return results;
+}
+
+function parseRemarksTransfers(ws, reporterFactoryKey, sheetYear, sheetMonth) {
+    const maxRow = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']).e.r + 1 : 0;
+    const procNames = PROC_ITEMS.map(i => i.name);
+    let inProcSection = false;
+    let currentItem = null;
+    let extractedCount = 0;
+
+    for (let r = 1; r <= maxRow; r++) {
+        const bCell = ws[XLSX.utils.encode_cell({r: r-1, c: 1})];
+        const dCell = ws[XLSX.utils.encode_cell({r: r-1, c: 3})];
+        const akCell = ws[XLSX.utils.encode_cell({r: r-1, c: 36})]; // AK열
+        const bVal = bCell ? String(bCell.v || '').trim() : '';
+        const dVal = dCell ? String(dCell.v || '').trim() : '';
+        const akVal = akCell ? String(akCell.v || '').trim() : '';
+
+        if (bVal.match(/^2\.\s*가공육/)) { inProcSection = true; continue; }
+        if (bVal.match(/^3\.\s*/)) { inProcSection = false; continue; }
+        if (!inProcSection) continue;
+
+        if (bVal && bVal !== '품목' && dVal === '기초') {
+            const norm = normalizeName(bVal);
+            currentItem = procNames.includes(norm) ? norm : null;
+            continue;
+        }
+        if (dVal === '기말') { currentItem = null; continue; }
+
+        if (currentItem && akVal && ['입고','출고','매장','본푸드','샤인','기타'].includes(dVal)) {
+            const transfers = extractTransfersFromRemark(akVal, dVal, currentItem, reporterFactoryKey, sheetYear, sheetMonth);
+            transfers.forEach(t => {
+                if (addProcTransfer(t._year, t._month, t)) extractedCount++;
+            });
+        }
+    }
+    return extractedCount;
 }
 
 // 파일명 → 파일 타입 자동 인식
@@ -2776,13 +3211,14 @@ function initDropZone() {
 
 // 참프레시 / 영미트 파서
 function parseChamfreshYoungmeat(wb, factory) {
-    const result = { factory, months: {} };
+    const result = { factory, months: {}, transfersExtracted: 0 };
 
     wb.SheetNames.forEach(sn => {
         const ym = parseSheetYM(sn);
         if (!ym) return;
         const ws = wb.Sheets[sn];
         const { meat, proc } = parseWorklogSheet(ws);
+        result.transfersExtracted += parseRemarksTransfers(ws, factory, ym.year, ym.month);
 
         const key = `${ym.year}-${ym.month}`;
         result.months[key] = { year: ym.year, month: ym.month, meat, proc };
@@ -2793,13 +3229,14 @@ function parseChamfreshYoungmeat(wb, factory) {
 
 // JSY(인천) 파서
 function parseJSY(wb) {
-    const result = { factory: 'incheon', months: {} };
+    const result = { factory: 'incheon', months: {}, transfersExtracted: 0 };
 
     wb.SheetNames.forEach(sn => {
         const ym = parseSheetYM(sn);
         if (!ym) return;
         const ws = wb.Sheets[sn];
         const { meat, proc } = parseWorklogSheet(ws);
+        result.transfersExtracted += parseRemarksTransfers(ws, 'incheon', ym.year, ym.month);
 
         const key = `${ym.year}-${ym.month}`;
         result.months[key] = { year: ym.year, month: ym.month, meat, proc };
@@ -3077,6 +3514,11 @@ function applyAllParsedData() {
                     if (isProc) {
                         if (val.ipgo !== undefined) setSourceData('processed', factoryKey, name, year, month, 'ipgoQty', val.ipgo);
                         if (val.chulgo !== undefined) setSourceData('processed', factoryKey, name, year, month, 'chulgoQty', val.chulgo);
+                        // 출고 분해 저장 (거점간이동 검증용)
+                        if (val.store !== undefined) setSourceData('processed', factoryKey, name, year, month, 'storeQty', val.store);
+                        if (val.bonfood !== undefined) setSourceData('processed', factoryKey, name, year, month, 'bonfoodQty', val.bonfood);
+                        if (val.shine !== undefined) setSourceData('processed', factoryKey, name, year, month, 'shineQty', val.shine);
+                        if (val.etc !== undefined) setSourceData('processed', factoryKey, name, year, month, 'etcQty', val.etc);
                         const d = getItemData('processed', factoryKey, name, year, month);
                         linkGicho('processed', factoryKey, name, year, month);
                         if (val.ipgo !== undefined) d.ipgoQty = val.ipgo;
@@ -3120,6 +3562,8 @@ function init() {
     if (savedSource) PARSED_SOURCE = JSON.parse(savedSource);
     const savedMeatAvg = localStorage.getItem('jsyfood_meat_avg');
     if (savedMeatAvg) MEAT_AVG_PRICES = JSON.parse(savedMeatAvg);
+    const savedTransfers = localStorage.getItem('jsyfood_proc_transfers');
+    if (savedTransfers) PROC_TRANSFERS = JSON.parse(savedTransfers);
     renderCurrentTab();
     initDropZone();
 }
